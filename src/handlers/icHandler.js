@@ -93,8 +93,29 @@ async function handleIcMessage(message) {
   }
 }
 
-async function handleIcButton(interaction) {
+/**
+ * interaction.update() sarmalayicisi.
+ * Discord interaction tek sefer yanitlanabilir. Cift tiklama yarisinda ikinci
+ * deneme 40060 alir; bu bir hata degil, panel zaten guncellenmis demektir.
+ * @returns {Promise<boolean>} gercekten guncellendiyse true
+ */
+async function safeUpdate(interaction, payload) {
   try {
+    await interaction.update(payload);
+    return true;
+  } catch (err) {
+    if (err?.code === 40060 || err?.code === 10062) {
+      logger.debug('IC paneli zaten guncellenmis (40060) — tekrar deneme yok.');
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function handleIcButton(interaction) {
+  let step = 'baslangic';
+  try {
+    step = 'yetki kontrolu';
     if (!canManageTickets(interaction.member)) {
       await interaction
         .reply({ embeds: [buildErrorEmbed('Bu işlem için yetkili olmalısınız.')], flags: MessageFlags.Ephemeral })
@@ -116,10 +137,12 @@ async function handleIcButton(interaction) {
       return true;
     }
 
+    step = 'karar kaydi';
     const approved = interaction.customId === 'ic_approve';
     decideIc(rec.panel_message_id, approved ? 'approved' : 'rejected', interaction.user.id);
     const fresh = getIcByPanel(rec.panel_message_id) || { ...rec, status: approved ? 'approved' : 'rejected', decided_by: interaction.user.id };
 
+    step = 'takma ad islemi';
     // Onayda: kullanıcının yazdığı isim doğrudan takma ad yapılır.
     // (Üye tek sefer çekilir: hem takma ad hem panel etiketi için kullanılır.)
     let targetMember = null;
@@ -153,7 +176,8 @@ async function handleIcButton(interaction) {
       }
     }
 
-    await interaction.update({
+    step = 'panel guncelleme';
+    await safeUpdate(interaction, {
       embeds: [
         buildIcPanelEmbed({
           userId: fresh.user_id,
@@ -166,6 +190,7 @@ async function handleIcButton(interaction) {
       ],
       components: [buildIcButtons(true)],
     });
+    step = 'bildirim';
     await interaction
       .followUp({ content: `${approved ? '✅ Talep onaylandı.' : '❌ Talep reddedildi.'}${nickNote}`, flags: MessageFlags.Ephemeral })
       .catch(() => {});
@@ -175,7 +200,7 @@ async function handleIcButton(interaction) {
       logger.error('Interaction EXPIRED: [ic buton] — kullanıcı "Uygulama yanıt vermedi" gördü.');
       return true;
     }
-    logger.error('Interaction failed: ic button.', err);
+    logger.error(`IC buton hatası [adım: ${step}]`, err);
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({ embeds: [buildErrorEmbed('İşlem sırasında bir hata oluştu.')], flags: MessageFlags.Ephemeral });
