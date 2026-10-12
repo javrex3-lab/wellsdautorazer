@@ -66,6 +66,43 @@ module.exports = {
       logger.error('Mazeret takibi başlatılamadı.', err);
     }
 
+    // ---- Ticket paneli sağlık kontrolü ----
+    // Panel mesajı silinmişse DB eski ID'ye bakar ve kimse fark etmez;
+    // sunucuda basılacak panel kalmaz. Ölüyse aynı kanala yeniden gönderir.
+    try {
+      const { ensureTicketPanel } = require('../handlers/ticketHandler');
+      const durumlar = [];
+      for (const [, g] of client.guilds.cache) {
+        try {
+          const r = await ensureTicketPanel(client, g);
+          durumlar.push(`${g.id}:${r.action}`);
+          if (r.ok && r.action === 'yeniden_olusturuldu') {
+            logger.success(`Ticket paneli düzeltildi (guild ${g.id}). Artık **/ticketpanel** çalıştırmana gerek yok.`);
+          }
+        } catch (err) {
+          logger.debug(`Ticket paneli kontrolü atlandı (guild ${g.id}): ${err.message}`);
+        }
+      }
+      if (durumlar.length) logger.info(`Ticket paneli durumu: ${durumlar.join(', ')}`);
+
+      // Silme/işlem sonrası kendini onar: 5 dakikada bir yeniden doğrula.
+      const panelTimer = setInterval(async () => {
+        for (const [, g] of client.guilds.cache) {
+          try {
+            const r = await ensureTicketPanel(client, g);
+            if (r.action === 'yeniden_olusturuldu') {
+              logger.error(`Ticket paneli yine silinmiş ve otomatik yeniden gönderildi (guild ${g.id}). Panel kanalına biri dokunuyor olabilir.`);
+            }
+          } catch {
+            /* sunucu erişilemez */
+          }
+        }
+      }, 5 * 60 * 1000);
+      if (typeof panelTimer.unref === 'function') panelTimer.unref();
+    } catch (err) {
+      logger.error('Ticket paneli kontrolü başlatılamadı.', err);
+    }
+
     // ---- FiveM canlı paneli (Yöntem A/B/C durumunu tek mesajda gösterir) ----
     // Kanal tanımlı değilse no-op çalışır; botu etkilemez.
     try {

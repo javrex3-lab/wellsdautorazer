@@ -22,6 +22,8 @@ const {
   setTicketDecision,
   deleteTicket,
   getAllTickets,
+  getTicketPanel,
+  upsertTicketPanel,
   incrementClaimStat,
 } = require('../database/database');
 const {
@@ -35,6 +37,8 @@ const {
   buildAddUserRow,
   buildLogEmbed,
   buildTranscriptRow,
+  buildTicketPanelEmbed,
+  buildCategoryMenu,
 } = require('../utils/ticketEmbeds');
 const { checkRoleAction, reasonText } = require('./roleHandler');
 const { fetchChannelMessages, buildTranscriptFile } = require('../utils/transcript');
@@ -166,18 +170,40 @@ function isOwnerOrStaff(ticket, interaction) {
 
 // ---------- Ticket oluşturma (select menüden) ----------
 
+// ---------- Aşama (stage) takibi ----------
+// TICKET_TRACE=1 ile açılır: akış hangi aşamada kesildi konsolda görünür.
+// Varsayılan KAPALI — her ticket için 9 satır log basmasın.
+const TICKET_TRACE = process.env.TICKET_TRACE === '1';
+
+/**
+ * Aşamayı ilerletir. Hata olursa hata logu HANGİ aşamada olduğunu söyler.
+ * @param {{v:string}} ref
+ * @param {number} no aşama numarası
+ * @param {string} ne ad
+ * @param {string} detay yalnız açık veri (kanal/rol ID gibi) — token yok
+ */
+function trace(ref, no, ne, detay = '') {
+  ref.v = `${no}. ${ne}`;
+  if (TICKET_TRACE) logger.info(`[ticket aşama ${ref.v}] ${detay}`);
+}
+
 async function createTicketFromSelect(interaction, categoryKey) {
+  const stage = { v: '0. başlamadı' };
   const guild = interaction.guild;
+  trace(stage, 1, 'interaction alındı', `kategori=${categoryKey} user=${interaction.user?.id}`);
   if (!guild) {
     return interaction.reply({ embeds: [buildErrorEmbed('Ticket yalnızca sunucu içinde açılabilir.')], ...EPH() });
   }
 
   const category = getCategoryByKey(categoryKey);
   if (!category) {
+    trace(stage, 3, 'kategori doğrulanamadı', `key=${categoryKey} geçersiz`);
     return interaction.reply({ embeds: [buildErrorEmbed('Geçersiz kategori. Lütfen tekrar deneyin.')], ...EPH() });
   }
+  trace(stage, 3, 'kullanıcı + kategori doğrulandı', `key=${categoryKey} label=${category.label}`);
 
   await interaction.deferReply({ ...EPH() });
+  trace(stage, 2, 'ACK verildi (deferReply)');
 
   try {
     // Duplicate engeli: kullanıcı başına açık ticket limiti
@@ -228,6 +254,7 @@ async function createTicketFromSelect(interaction, categoryKey) {
     }
 
     const parent = await resolveCategory(guild);
+    trace(stage, 4, 'kategori kontrol edildi', `beklenen=${config.ticket.categoryId} bulunan=${parent?.id || 'YOK'}`);
     if (!parent) {
       logger.error(`TICKET_CATEGORY_ID bulunamadı veya kategori değil: ${config.ticket.categoryId}`);
       return interaction.editReply({
@@ -314,11 +341,13 @@ async function createTicketFromSelect(interaction, categoryKey) {
     }
 
     const overwrites = [...overwritesMap.values()];
+    trace(stage, 5, 'izinler hazırlandı', `${overwrites.length} overwrite`);
 
     let channel;
     try {
       // Guard internal tracking — botun ticket oluşturması saldırı sayılmasın (spec 19)
       markTicketGuard(guild.id, `pending-${ticketId}`);
+      trace(stage, 6, 'kanal oluşturma isteği gönderiliyor', `parent=${parent.id}`);
       channel = await guild.channels.create({
         name: sanitizeChannelName(interaction.user.username, ticketId),
         type: ChannelType.GuildText,
@@ -327,6 +356,7 @@ async function createTicketFromSelect(interaction, categoryKey) {
         permissionOverwrites: overwrites,
       });
       markTicketGuard(guild.id, channel.id);
+      trace(stage, 7, 'kanal oluşturuldu', `<#${channel.id}>`);
 
       // Kanal gerçekten kategoriye düştü mü? Discord parent'ı sessizce yok
       // sayabilir (kategori limiti/izin kısıtı). Doğrulamazsak ticket yanlış
@@ -416,6 +446,7 @@ async function createTicketFromSelect(interaction, categoryKey) {
       logger.warn('TICKET_PING_ROLE_ID tanımlı değil — ticket açılışında rol etiketlemesi yapılmıyor.');
     }
     try {
+      trace(stage, 8, 'karşılama mesajı gönderiliyor', `ping=${pingRole || 'kapalı'}`);
       // Etiket YALNIZCA bu ilk karşılama mesajında, TEK kez gider.
       const panelMsg = await channel.send({
         content: `<@${interaction.user.id}>${pingRole ? ` <@&${pingRole}>` : ''}`,
@@ -459,23 +490,35 @@ async function createTicketFromSelect(interaction, categoryKey) {
       logger.warn(`Ticket #${ticketId} form mesajı gönderilemedi: ${err.code || err.message}`);
     }
 
+    trace(stage, 9, 'kayıt tamamlandı', `ticket=#${ticketId}`);
     logger.success(`Ticket #${ticketId} açıldı: #${channel.name} (${interaction.user.tag}, ${category.label}) • rol ping: ${pingRole || 'kapalı'}`);
-    await sendLog(guild, 'created', {
-      ticketId,
-      userId: interaction.user.id,
-      categoryLabel: category.label,
-      channelId: channel.id,
-      actorId: interaction.user.id,
-    });
 
     const pingUyarisi = pingRolHatasi
       ? `\n\n⚠️ **Uyarı:** yetkili ekip rolü etiketlenemedi (\`${pingRolHatasi}\`). ` +
         'Talebiniz kayıt altına alındı, yöneticinize bildirildi.'
       : '';
-    return interaction.editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>${pingUyarisi}` });
+
+    // Kullanıcıya ÖNCE yanıt ver. Ticket log kanalına yazmak kullanıcıyı
+    // beklemesin diye sonraya alındı (interaction süresi 3sn sınırına yakın).
+    const sonuc = await interaction
+      .editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>${pingUyarisi}` })
+      .catch(() => {});
+
+    // Log geri planda — asla akışı bloklamasın.
+    sendLog(guild, 'created', {
+      ticketId,
+      userId: interaction.user.id,
+      categoryLabel: category.label,
+      channelId: channel.id,
+      actorId: interaction.user.id,
+    }).catch((err) => logger.warn(`Ticket #${ticketId} logu gönderilemedi: ${err.code || err.message}`));
+
+    return sonuc;
   } catch (err) {
-    logger.error('Interaction failed: ticket oluşturma.', err);
-    return interaction.editReply({ embeds: [buildErrorEmbed('Ticket oluşturulurken bir hata oluştu.')] }).catch(() => {});
+    logger.error(`Interaction failed: ticket oluşturma [aşama: ${stage.v}].`, err);
+    return interaction
+      .editReply({ embeds: [buildErrorEmbed('Ticket oluşturulurken bir hata oluştu. Lütfen yöneticiye bildirin.')] })
+      .catch(() => {});
   }
 }
 
@@ -1390,11 +1433,86 @@ async function repairAllTicketPermissions(client) {
   return { staff: staffRes, viewer: viewerRes };
 }
 
+// ---------- Panel sağlık kontrolü ----------
+
+/**
+ * Kayıtlı ticket panelinin hâlâ AYAKTA olduğunu doğrular.
+ *
+ * Neden: panel mesajı silinince (admin sildi / /clear / kanal temizliği) DB eski
+ * mesaj ID'sine bakmaya devam eder, kimse fark etmez ve sunucuda basılacak panel
+ * kalmaz — kullanıcı "ticket açılamıyor" diye kalır. Bu kontrol ölüyse aynı kanala
+ * yeni panel gönderir.
+ *
+ * @param {Client} client
+ * @param {Guild} guild
+ * @returns {Promise<{ok:boolean, action:string, channelId?:string, messageId?:string}>}
+ */
+async function ensureTicketPanel(client, guild) {
+  const res = { ok: false, action: 'bilinmiyor' };
+  try {
+    const kayit = getTicketPanel(guild.id);
+
+    if (!kayit) {
+      res.action = 'kayit_yok';
+      logger.warn(
+        `Ticket paneli kayıtlı değil — panel açmak için **/ticketpanel** komutunu çalıştır (guild ${guild.id}).`,
+      );
+      return res;
+    }
+
+    const channel = await guild.channels.fetch(kayit.channel_id).catch(() => null);
+    if (!channel?.isTextBased?.()) {
+      res.action = 'kanal_yok';
+      logger.error(`Ticket panelinin kanalı yok: ${kayit.channel_id} — **/ticketpanel** ile yeni panel gönder.`);
+      return res;
+    }
+
+    const mesaj = await channel.messages.fetch(kayit.message_id).catch(() => null);
+    if (mesaj) {
+      res.ok = true;
+      res.action = 'ayakta';
+      res.channelId = channel.id;
+      res.messageId = mesaj.id;
+      return res;
+    }
+
+    // --- Panel ölmüş (10008) ---
+    res.action = 'yeniden_olusturuldu';
+    logger.warn(`Ticket paneli silinmiş görünüyor (#${channel.name}) — yeniden gönderiliyor.`);
+
+    const me = guild.members?.me;
+    if (me) {
+      const p = channel.permissionsFor(me);
+      if (!p?.has(PermissionFlagsBits.SendMessages) || !p?.has(PermissionFlagsBits.EmbedLinks)) {
+        res.action = 'yetki_yok';
+        logger.error(`Ticket paneli yeniden gönderilemedi: **${channel.name}** kanalında botun Mesaj Gönder/Embed Gönder izni yok.`);
+        return res;
+      }
+    }
+
+    const yeni = await channel.send({
+      embeds: [buildTicketPanelEmbed(guild)],
+      components: [buildCategoryMenu()],
+    });
+    upsertTicketPanel(guild.id, channel.id, yeni.id);
+    res.ok = true;
+    res.channelId = channel.id;
+    res.messageId = yeni.id;
+    logger.success(`Ticket paneli yeniden oluşturuldu: <#${channel.id}> (${yeni.id})`);
+    return res;
+  } catch (err) {
+    res.action = 'hata';
+    logger.error(`Ticket paneli kontrolü başarısız (guild ${guild?.id}):`, err);
+    return res;
+  }
+}
+
 module.exports = {
   handleTicketButton,
   _buildAcceptNickname: buildAcceptNickname,
   _isBasvuru: isBasvuru,
   createTicketFromSelect,
+  ensureTicketPanel,
   handleAddUserSelect,
   sendLog,
   syncTicketViewerRole,
