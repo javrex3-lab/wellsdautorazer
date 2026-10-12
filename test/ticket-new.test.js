@@ -656,6 +656,84 @@ const guildYap = (cat) => ({
   check('Kapat: kategori/panel silinmedi', !silinen.includes(CATEGORY));
 
   /* ============================================================== */
+  section('9) PANEL GÖRSELİ');
+
+  const kokYol = path.resolve(__dirname, '..');
+  const gorselYol = path.join(kokYol, 'assets', 'ticket-panel.png');
+
+  check('assets/ticket-panel.png repoda var', fs.existsSync(gorselYol));
+  check('Görsel PNG imzası ile başlıyor', fs.readFileSync(gorselYol).subarray(1, 4).toString() === 'PNG');
+  check(
+    'Görsel boyutu makul (< 8 MB Discord limiti)',
+    fs.statSync(gorselYol).size < 8 * 1024 * 1024,
+    String(Math.round(fs.statSync(gorselYol).size / 1024 / 1024 * 100) / 100) + ' MB',
+  );
+  check('Görselin SHA256\'si beklenen', (() => {
+    const h = require('crypto').createHash('sha256').update(fs.readFileSync(gorselYol)).digest('hex');
+    return h.startsWith('5cd1ab5b0f926062506c5f0c676a6ebe');
+  })());
+
+  const g = tickets.panelGorseli();
+  check('panelGorseli() dosyayı seçiyor', g.kaynak === 'dosya' && g.yol === gorselYol, g.kaynak);
+
+  // sendMainPanel: YENİ panel -> dosya mesaja ekleniyor
+  {
+    const gonderilen = [];
+    const kanal = {
+      id: '1522774099317887078',
+      name: 'panel',
+      send: async (p) => {
+        gonderilen.push(p);
+        return { id: '999000000000009900' };
+      },
+      messages: { fetch: async () => Promise.reject(new Error('yok')) },
+    };
+    db.deleteTicketPanel(G);
+    const r = await tickets.sendMainPanel({}, { id: G, name: 'WELL SD' }, kanal);
+    check('sendMainPanel yeni panel gönderdi', r.ok === true && r.action === 'gonderildi', r.action);
+    check('Mesaja dosya eklendi', Array.isArray(gonderilen[0].files) && gonderilen[0].files.length === 1);
+    check(
+      'Embed görseli attachment:// ile bağlı',
+      gonderilen[0].embeds[0].data.image?.url === 'attachment://ticket-panel.png',
+      gonderilen[0].embeds[0].data.image?.url,
+    );
+    check('Panel kaydı DBye yazıldı', db.getTicketPanel(G)?.message_id === '999000000000009900');
+    check('Butonlar panel mesajında', gonderilen[0].components[0].toJSON().components.length === 3);
+
+    // sendMainPanel tekrar -> duplicate YOK, mevcut güncellenir (görsel korunur)
+    const editCagrisi = [];
+    kanal.messages.fetch = async () => ({
+      id: '999000000000009900',
+      embeds: [{ image: { url: 'https://cdn.discordapp.com/attachments/1/2/ticket-panel.png' } }],
+      edit: async (p) => editCagrisi.push(p),
+    });
+    const r2 = await tickets.sendMainPanel({}, { id: G, name: 'WELL SD' }, kanal);
+    check('İkinci çalıştırmada yeni mesaj gönderilmedi', r2.action === 'guncellendi', r2.action);
+    check('Toplam gönderilen mesaj hâlâ 1', gonderilen.length === 1, String(gonderilen.length));
+    check(
+      'Güncellemede mevcut görsel korundu',
+      editCagrisi[0].embeds[0].data.image?.url === 'https://cdn.discordapp.com/attachments/1/2/ticket-panel.png',
+      editCagrisi[0].embeds[0].data.image?.url,
+    );
+  }
+
+  // Dosya yoksa kayıtlı URL yedeğine düşüyor mu?
+  {
+    db.setSetting('ticket_panel_image', 'https://cdn.discordapp.com/attachments/1/2/yedek-panel.png');
+    const gecici = gorselYol + '.gizli';
+    fs.renameSync(gorselYol, gecici);
+    try {
+      const y = tickets.panelGorseli();
+      check('Dosya yokken kayıtlı URL yedeğine düşüyor', y.kaynak === 'url', y.kaynak);
+      check('Yedek URL doğru değer', y.url === 'https://cdn.discordapp.com/attachments/1/2/yedek-panel.png', y.url);
+    } finally {
+      fs.renameSync(gecici, gorselYol);
+    }
+    check('Dosya geri geldi', fs.existsSync(gorselYol));
+    check('Dosya varken dosya yine seçiliyor', tickets.panelGorseli().kaynak === 'dosya');
+  }
+
+  /* ============================================================== */
   console.log('\n' + '='.repeat(66));
   console.log('  SONUÇ:  ' + pass + ' başarılı / ' + (pass + fail) + ' toplam  /  ' + fail + ' başarısız');
   console.log('='.repeat(66));

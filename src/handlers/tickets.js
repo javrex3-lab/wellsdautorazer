@@ -17,6 +17,8 @@ const {
   PermissionFlagsBits,
   MessageFlags,
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 const { canManageTickets } = require('../utils/permissions');
@@ -37,6 +39,10 @@ const {
 
 const EPH = (extra = {}) => ({ flags: MessageFlags.Ephemeral, ...extra });
 
+/** Panel görseli — repoya gömülü (Railway gibi uzak çalışmalarda da hazır). */
+const PANEL_GORSEL_DOSYA = path.join(__dirname, '..', '..', 'assets', 'ticket-panel.png');
+const PANEL_GORSEL_ADI = 'ticket-panel.png';
+
 /** Silme zamanlayıcıları: aynı kanal için birden fazla görev çalışmasın. */
 const silmeZamanlayici = new Map();
 
@@ -52,15 +58,23 @@ const silmeZamanlayici = new Map();
  * @returns {Promise<{ok:boolean, action:string, messageId?:string}>}
  */
 async function sendMainPanel(client, guild, kanal) {
-  const res = { ok: false, action: 'bilinmiyor' };
+  const res = { ok: false, action: 'bilinmiyor', gorsel: 'yok' };
   try {
+    const gorsel = panelGorseli();
+
     // Duplicate engeli: aynı kanalda canlı bir panel varsa YENİSİ GÖNDERİLMEZ.
     const kayit = getTicketPanel(guild.id);
     if (kayit && kayit.channel_id === kanal.id) {
       const mevcut = await kanal.messages.fetch(kayit.message_id).catch(() => null);
       if (mevcut) {
-        const { embed, row } = buildMainPanel({ guildName: guild.name, imageUrl: panelImage() });
+        // Düzenlemede dosya EKLENEMEZ; o mesajın kendi görseli korunur.
+        const mevcutUrl = mevcut.embeds?.[0]?.image?.url || null;
+        const { embed, row } = buildMainPanel({
+          guildName: guild.name,
+          imageUrl: gorsel.kaynak === 'url' ? gorsel.url : mevcutUrl,
+        });
         await mevcut.edit({ embeds: [embed], components: [row] });
+        res.gorsel = embed.data.image?.url ? 'korundu' : 'yok';
         res.ok = true;
         res.action = 'guncellendi';
         res.messageId = mevcut.id;
@@ -69,8 +83,24 @@ async function sendMainPanel(client, guild, kanal) {
       deleteTicketPanel(guild.id);
     }
 
-    const { embed, row } = buildMainPanel({ guildName: guild.name, imageUrl: panelImage() });
-    const msg = await kanal.send({ embeds: [embed], components: [row] });
+    // Yeni panel: görsel panel mesajının KENDİSİne ek olarak yüklenir.
+    let imageUrl = null;
+    const files = [];
+    if (gorsel.kaynak === 'dosya') {
+      imageUrl = `attachment://${PANEL_GORSEL_ADI}`;
+      files.push(fs.createReadStream(gorsel.yol));
+      res.gorsel = 'dosya (mesaja ekleniyor)';
+    } else if (gorsel.kaynak === 'url') {
+      imageUrl = gorsel.url;
+      res.gorsel = 'url';
+    }
+
+    const { embed, row } = buildMainPanel({ guildName: guild.name, imageUrl });
+    const msg = await kanal.send({
+      embeds: [embed],
+      components: [row],
+      ...(files.length ? { files } : {}),
+    });
     upsertTicketPanel(guild.id, kanal.id, msg.id);
     res.ok = true;
     res.action = 'gonderildi';
@@ -83,13 +113,23 @@ async function sendMainPanel(client, guild, kanal) {
   }
 }
 
-/** Panel görseli (varsa). */
-function panelImage() {
-  try {
-    return getSetting('ticket_panel_image') || null;
-  } catch {
-    return null;
+/**
+ * Panel görseli kaynağını seçer.
+ *  - kaynak: dosya -> panel mesajına ek olarak yüklenecek (en sağlam)
+ *  - kaynak: url   -> kayıtlı CDN adresi (dosya yoksa son çare)
+ *  - kaynak: yok   -> göselsiz panel
+ */
+function panelGorseli() {
+  if (fs.existsSync(PANEL_GORSEL_DOSYA)) {
+    return { kaynak: 'dosya', yol: PANEL_GORSEL_DOSYA };
   }
+  let url = null;
+  try {
+    url = getSetting('ticket_panel_image') || null;
+  } catch (err) {
+    logger.warn(`Panel görseli ayarı okunamadı: ${err.message}`);
+  }
+  return url ? { kaynak: 'url', url } : { kaynak: 'yok' };
 }
 
 /* ================================================================== */
@@ -601,6 +641,8 @@ async function safeReplyGone(interaction) {
 
 module.exports = {
   KATEGORI_HATASI,
+  panelGorseli,
+  PANEL_GORSEL_DOSYA,
   CID,
   OPEN_KIND,
   isKnownKind,
