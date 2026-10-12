@@ -4,7 +4,7 @@
  * - .env'i yedekli günceller, ayar anında aktif olur (restart gerekmez).
  */
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { buildSetupResultEmbed } = require('../utils/ticketEmbeds');
+const { buildSetupResultEmbed } = require('../utils/embeds');
 const { buildErrorEmbed } = require('../utils/embeds');
 const { runSetup } = require('../handlers/setupHandler');
 const { canManageTickets } = require('../utils/permissions');

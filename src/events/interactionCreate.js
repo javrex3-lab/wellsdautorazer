@@ -8,7 +8,6 @@ const { buildErrorEmbed } = require('../utils/embeds');
 const { hasCommandAccess, canManageRoles, canManageBan } = require('../utils/permissions');
 const { canManageGuard } = require('../guard/permissions');
 const { handleButton } = require('../handlers/buttonHandler');
-const { handleSelectMenu } = require('../handlers/selectHandler');
 const { MODAL_ID, handleMazeretSubmit } = require('../handlers/mazeretHandler');
 const logger = require('../utils/logger');
 
@@ -51,18 +50,6 @@ module.exports = {
         return;
       }
 
-      // --- Select menüler (ticket kategori / kullanıcı seçimi) ---
-      if (interaction.isStringSelectMenu() || interaction.isUserSelectMenu()) {
-        const handled = await handleSelectMenu(interaction);
-        if (!handled) {
-          logger.warn(`Bilinmeyen select customId: ${interaction.customId}`);
-          if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-            await interaction.reply({ embeds: [buildErrorEmbed('Bilinmeyen seçim.')], flags: MessageFlags.Ephemeral }).catch(() => {});
-          }
-        }
-        logger.info(`Interaction handled: ${label} (${Date.now() - start}ms)`);
-        return;
-      }
 
       // --- Modal gönderimleri (mazeret formu) ---
       if (interaction.isModalSubmit()) {

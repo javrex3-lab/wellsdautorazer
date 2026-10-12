@@ -1,0 +1,606 @@
+/**
+ * YENİ ticket sistemi testleri — gerçek kod çalıştırılır, Discord bağlantısı yoktur.
+ * DB katmanı geçici veritabanı ile uçtan uca test edilir.
+ * Kategori doğrulama ve handler yetki kontrolleri sahte Discord nesneleriyle test edilir.
+ */
+process.env.DB_PATH = require('path').join(require('os').tmpdir(), 'tknew-' + Date.now() + '.db');
+
+const fs = require('fs');
+const path = require('path');
+const db = require('../src/database/database');
+
+const G = '1354465879311777893';
+const U1 = '100000000000000001';
+const U2 = '100000000000000002';
+const STAFF = '1056585742731726918';
+const BOT = '1559192913009713222';
+const CATEGORY = '1522774034323079329';
+const PING_ROLE = '1522773972393922730';
+
+db.initDatabase();
+
+let pass = 0,
+  fail = 0;
+const check = (name, cond, extra = '') => {
+  if (cond) {
+    pass++;
+    console.log('  OK   ' + name);
+  } else {
+    fail++;
+    console.log('  FAIL ' + name + (extra ? '  -> ' + extra : ''));
+  }
+};
+const section = (t) => console.log('\n' + '-'.repeat(4) + ' ' + t);
+
+console.log('='.repeat(66));
+console.log('  YENİ TICKET SİSTEMİ — TESTLER');
+console.log('='.repeat(66));
+
+/* ================================================================== */
+section('1) ANA PANEL — tam olarak 3 seçenek');
+
+const views = require('../src/utils/ticketViews');
+const row = views.buildMainPanelRow().toJSON().components;
+check('Panelde 3 buton var', row.length === 3, 'bulunan: ' + row.length);
+check(
+  'Butonlar: Başvuru / Şikayet / Diğer',
+  row.map((c) => c.label).join('|') === 'Başvuru|Şikayet|Diğer',
+  row.map((c) => c.label).join('|'),
+);
+check(
+  'customId: tk_ac_basvuru / tk_ac_sikayet / tk_ac_diger',
+  row.map((c) => c.custom_id).join('|') === 'tk_ac_basvuru|tk_ac_sikayet|tk_ac_diger',
+  row.map((c) => c.custom_id).join('|'),
+);
+check('Panel butonları OPEN_KIND ile türe eşleşiyor', row.every((c) => views.OPEN_KIND[c.custom_id]));
+check('Emoji: 📝 / 📢 / 📩', row.map((c) => c.emoji?.name).join('') === '\u{1F4DD}\u{1F4E2}\u{1F4E9}');
+
+const panel = views.buildMainPanel({ guildName: 'WELL SD' });
+check('Panel embed + buton satırı üretiliyor', !!panel.embed && !!panel.row);
+check('Panel embed başlığı', panel.embed.data.title.includes('Ticket'), panel.embed.data.title);
+check('Görsel verilince embed image alıyor', !!views.buildMainPanel({ imageUrl: 'https://x/y.png' }).embed.data.image?.url);
+check('Görsel verilmezse image yok', !panel.embed.data.image);
+
+/* ================================================================== */
+section('2) TICKET KANALI BUTONLARI');
+
+const btn = (kind, st) => views.buildTicketRow(kind, st || 'open').toJSON().components;
+const basvuru = btn('basvuru');
+check('Başvuru: 3 buton', basvuru.length === 3, 'bulunan: ' + basvuru.length);
+check(
+  'Başvuru butonları: Kabul Et / Reddet / Kapat',
+  basvuru.map((c) => c.label).join('|') === 'Kabul Et|Reddet|Kapat',
+  basvuru.map((c) => c.label).join('|'),
+);
+check(
+  'Başvuru customId: tk_kabul / tk_reddet / tk_kapat',
+  basvuru.map((c) => c.custom_id).join('|') === 'tk_kabul|tk_reddet|tk_kapat',
+);
+for (const k of ['sikayet', 'diger']) {
+  const r = btn(k);
+  check(k + ': sadece 1 buton (Kapat)', r.length === 1 && r[0].label === 'Kapat', r.map((c) => c.label).join('|'));
+  check(k + ': Kabul/Reddet butonu YOK', !r.some((c) => ['Kabul Et', 'Reddet'].includes(c.label)));
+}
+check('Başvuru kabul edildikten sonra Kabul/Reddet kaybolur', btn('basvuru', 'accepted').length === 1);
+check('Başvuru reddedildikten sonra Kabul/Reddet kaybolur', btn('basvuru', 'rejected').length === 1);
+check('Başvuru butonları tek satırda', views.buildTicketRow('basvuru').toJSON().components.length <= 5);
+
+/* ================================================================== */
+section('3) EMBED DURUMLARI');
+
+const emb = (k, st, extra) =>
+  views.buildTicketEmbed(Object.assign({ kind: k, ownerId: U1, ownerTag: 'd27q#0001', status: st }, extra || {}));
+const txt = (e) => JSON.stringify(e.data);
+check('Açık durum "AÇIK" gösterir', txt(emb('basvuru', 'open')).includes('AÇIK'));
+check('Kabul "KABUL EDİLDİ" gösterir', txt(emb('basvuru', 'accepted')).includes('KABUL EDİLDİ'));
+check('Ret "REDDEDİLDİ" gösterir', txt(emb('basvuru', 'rejected')).includes('REDDEDİLDİ'));
+check('Embed sahibi etiketliyor', txt(emb('basvuru', 'open')).includes('<@' + U1 + '>'));
+
+const rolSonuc = views.buildTicketEmbed({
+  kind: 'basvuru',
+  ownerId: U1,
+  ownerTag: 'x#1',
+  status: 'open',
+  roles: [
+    { roleId: '1522773986721660928', ok: true },
+    { roleId: '1522773983588646982', ok: false, note: 'bot rolünün altında' },
+  ],
+});
+check(
+  'Kısmi rol başarısı embedde açıkça raporlanıyor',
+  txt(rolSonuc).includes('KISMEN') && txt(rolSonuc).includes('bot rolünün altında'),
+);
+
+/* ================================================================== */
+section('4) VERİTABANI KATMANI');
+
+const t1 = db.createTicketSession({ guildId: G, ownerId: U1, kind: 'basvuru' });
+check('createTicketSession kayıt döndürüyor', !!t1 && !!t1.id);
+check('Varsayılan durum "open"', t1.status === 'open');
+check('Kanal henüz NULL', t1.channel_id === null);
+
+check('setTicketChannel yazıyor', db.setTicketChannel(t1.id, '999000000000000001') === true);
+const bulunan = db.getTicketByChannel('999000000000000001');
+check('getTicketByChannel ticketı buluyor', bulunan && bulunan.id === t1.id);
+check('Kayıttan sahip doğru okunuyor', bulunan.owner_id === U1, 'okunan: ' + bulunan?.owner_id);
+check('Kayıttan tür doğru okunuyor', bulunan.kind === 'basvuru');
+check('Olmayan kanal null döner', db.getTicketByChannel('123') === null);
+check('Null kanal ID güvenli', db.getTicketByChannel(null) === null);
+check('getOpenTicketByUser açık ticketı buluyor', db.getOpenTicketByUser(G, U1)?.id === t1.id);
+check('Başka kullanıcıda açık ticket yok', db.getOpenTicketByUser(G, U2) === null);
+
+check('setTicketStatus accepted', db.setTicketStatus(t1.id, 'accepted', { actorId: STAFF }) === true);
+check('Durum DBden okunuyor', db.getTicketByChannel('999000000000000001').status === 'accepted');
+check('Aktör kaydedildi', db.getTicketByChannel('999000000000000001').actor_id === STAFF);
+check('Kabul sonrası açık listeden düştü', db.getOpenTicketByUser(G, U1) === null);
+
+const t2 = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'sikayet' });
+db.setTicketChannel(t2.id, '999000000000000002');
+db.setTicketStatus(t2.id, 'closed', { actorId: U2 });
+check('closed_at doluyor', !!db.getTicketByChannel('999000000000000002').closed_at);
+
+check('Aynı kanal iki ticket alamıyor (UNIQUE)', (() => {
+  const x = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'diger' });
+  const r = db.setTicketChannel(x.id, '999000000000000002');
+  db.endTicketSession(x.id, { reason: 'test' });
+  return r === false;
+})());
+
+check('Geçersiz tür reddediliyor', (() => {
+  const x = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'BOZUK' });
+  return x === null;
+})());
+check('endTicketSession kapatıyor', (() => {
+  const x = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'diger' });
+  db.setTicketChannel(x.id, '999000000000000003');
+  return db.endTicketSession(x.id, { reason: 'test' }) === true && db.getTicketByChannel('999000000000000003').status === 'closed';
+})());
+
+check('upsertTicketPanel yazıyor', db.upsertTicketPanel(G, '111', '222') === true);
+check('getTicketPanel okuyor', db.getTicketPanel(G)?.message_id === '222');
+db.upsertTicketPanel(G, '111', '333');
+check('Aynı guild için tek kayıt (upsert)', db.getTicketPanel(G).message_id === '333');
+check(
+  'Farklı guild ayrı kayıt',
+  (() => {
+    db.upsertTicketPanel('999', '1', '1');
+    return db.getTicketPanel('999')?.message_id === '1';
+  })(),
+);
+check('deleteTicketPanel siliyor', db.deleteTicketPanel(G) === true && db.getTicketPanel(G) === null);
+
+/* ---- Veri korunuyor mu? ---- */
+const tablolar = db.getDb()
+  .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+  .all()
+  .map((r) => r.name);
+check('Eski tickets tablosu SİLİNMEDİ (veri korunur)', tablolar.includes('tickets'));
+check('Guard tabloları duruyor', tablolar.includes('guard_whitelist') && tablolar.includes('guard_settings'));
+check('Mazeret tabloları duruyor', tablolar.includes('mazeret_records'));
+check('Çekiliş tabloları duruyor', tablolar.includes('giveaways'));
+check('Yeni ticket_sessions tablosu var', tablolar.includes('ticket_sessions'));
+check('Yeni ticket_panel tablosu var', tablolar.includes('ticket_panel'));
+
+/* ================================================================== */
+section('5) KATEGORİ DOĞRULAMA');
+
+const tickets = require('../src/handlers/tickets');
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
+
+const dogruKategori = (botYetkisi) => ({
+  id: CATEGORY,
+  type: ChannelType.GuildCategory,
+  permissionsFor: () => ({ has: () => botYetkisi }),
+});
+const guildYap = (cat) => ({
+  roles: { everyone: { id: G }, cache: new Map() },
+  members: {
+    me: { permissions: { has: () => true }, roles: { highest: { position: 90 } } },
+  },
+  channels: { fetch: async (id) => (id === CATEGORY && cat ? cat : Promise.reject(new Error('yok'))) },
+});
+
+(async () => {
+  const ok = await tickets.resolveTicketCategory(guildYap(dogruKategori(true)));
+  check('Doğru kategori kabul ediliyor', ok.ok === true && ok.parent?.id === CATEGORY);
+
+  const yok = await tickets.resolveTicketCategory(guildYap(null));
+  check('Yoksa kategori açılmıyor', yok.ok === false && yok.reason === 'kategori_yok', yok.reason);
+
+  const yanlis = await tickets.resolveTicketCategory(guildYap({ id: CATEGORY, type: ChannelType.GuildText }));
+  check('Kategori değilse reddediliyor', yanlis.ok === false && yanlis.reason === 'kategori_degil', yanlis.reason);
+
+  const yetkisiz = await tickets.resolveTicketCategory(guildYap(dogruKategori(false)));
+  check('Bot yetkisi yoksa reddediliyor', yetkisiz.ok === false && yetkisiz.reason === 'yetki_yok', yetkisiz.reason);
+
+  /* ============================================================== */
+  section('6) HANDLER YETKİ KONTROLLERİ');
+
+  /**
+   * Sahte Discord etkileşimi. Yanıtlar `it._c` (calls) üzerinden toplanır.
+   * (Closure'ın sahte nesneye değil seçeneklere yazması hatasına düşmemek için
+   *  çağrı kayıtları ayrı bir nesnede tutulur.)
+   */
+  const sahteEtkilesim = (o = {}) => {
+    const c = { reply: null, edit: null, update: null, followUp: null, deferred: false };
+    return {
+      _c: c,
+      customId: o.customId,
+      channelId: o.channelId === undefined ? '999000000000000010' : o.channelId,
+      user: { id: o.userId || U1, tag: 'test#0001', username: 'test' },
+      member: { id: o.userId || U1, permissions: { has: () => !!o.staff } },
+      guild: o.guild || null,
+      channel: o.channel || null,
+      client: { user: { id: BOT } },
+      replied: false,
+      deferred: false,
+      isRepliable: () => true,
+      reply: async (p) => ((c.reply = p), true),
+      editReply: async (p) => ((c.edit = p), true),
+      update: async (p) => ((c.update = p), true),
+      followUp: async (p) => ((c.followUp = p), true),
+      deferReply: async () => ((c.deferred = true), true),
+      deferUpdate: async () => ((c.deferred = true), true),
+    };
+  };
+  const yanit = (it) => JSON.stringify(it._c.edit || it._c.reply || it._c.update || {});
+
+  // Hazır ticket'lar (bölüm 6 için hepsi 'open' durumunda)
+  const basvuruKanal = '999000000000000010';
+  const sikayetKanal = '999000000000000011';
+  const tb = db.createTicketSession({ guildId: G, ownerId: U1, kind: 'basvuru' });
+  db.setTicketChannel(tb.id, basvuruKanal);
+  const ts = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'sikayet' });
+  db.setTicketChannel(ts.id, sikayetKanal);
+
+  const bilinmeyen = sahteEtkilesim({ customId: 'tk_bilinmeyen' });
+  check('Bilinmeyen customId false döner', (await tickets.handleTicketButton(bilinmeyen)) === false);
+
+  const kabulYetkisiz = sahteEtkilesim({ customId: 'tk_kabul', channelId: basvuruKanal, userId: U2, staff: false });
+  const kr = await tickets.handleTicketButton(kabulYetkisiz);
+  check('Kabul: yetkisiz kullanıcı reddediliyor', kr !== false);
+  check('Kabul: yetkisize "yetkili olmalısınız" yanıtı', yanit(kabulYetkisiz).includes('yetkili olmalısınız'), yanit(kabulYetkisiz));
+  check('Kabul: yetkisizde rol verilmemiş (durum değişmemiş)', db.getTicketByChannel(basvuruKanal).status === 'open');
+
+  const retYetkisiz = sahteEtkilesim({ customId: 'tk_reddet', channelId: basvuruKanal, userId: U2, staff: false });
+  await tickets.handleTicketButton(retYetkisiz);
+  check('Ret: yetkisiz kullanıcı reddediliyor', yanit(retYetkisiz).includes('yetkili olmalısınız'), yanit(retYetkisiz));
+
+  const retSikayet = sahteEtkilesim({ customId: 'tk_reddet', channelId: sikayetKanal, staff: true });
+  await tickets.handleTicketButton(retSikayet);
+  check('Ret: yalnızca Başvuru türünde çalışır', yanit(retSikayet).includes('Başvuru'), yanit(retSikayet));
+  check('Ret: şikayet ticketı durumu değişmedi', db.getTicketByChannel(sikayetKanal).status === 'open');
+
+  const kapatYabanci = sahteEtkilesim({ customId: 'tk_kapat', channelId: basvuruKanal, userId: U2, staff: false });
+  await tickets.handleTicketButton(kapatYabanci);
+  check('Kapat: yabancı + yetkisiz engelleniyor', yanit(kapatYabanci).includes('sahibi veya yetkililer'), yanit(kapatYabanci));
+
+  // Ticket kaydı olmayan kanal
+  const kayitsiz = sahteEtkilesim({ customId: 'tk_kapat', channelId: '999000000000000999', staff: true });
+  await tickets.handleTicketButton(kayitsiz);
+  check('Kapat: kayıtsız kanal reddediliyor', yanit(kayitsiz).includes('ticket olarak kayıtlı değil'), yanit(kayitsiz));
+
+  // Kapat: sahibi kapatabilir
+  const kapatSahip = sahteEtkilesim({ customId: 'tk_kapat', channelId: sikayetKanal, userId: U2, staff: false });
+  const silinenler = [];
+  kapatSahip.guild = { channels: { fetch: async () => ({ delete: async () => silinenler.push('sikayet') }) } };
+  kapatSahip.channel = { send: async () => {} };
+  await tickets.handleTicketButton(kapatSahip);
+  check('Kapat: sahibi kapatabiliyor', db.getTicketByChannel(sikayetKanal).status === 'closed');
+  check('Kapat: "5 saniye içinde siliniyor" mesajı planlandı', kapatSahip._c.deferred === true);
+  check('Kapat: silme zamanlayıcısı kaydedildi', tickets._silmeZamanlayici.size >= 1);
+
+  /* ============================================================== */
+  section('7) ESKİ SİSTEM KALINTISI YOK');
+
+  const kok = path.resolve(__dirname, '..');
+  for (const f of [
+    'src/handlers/ticketHandler.js',
+    'src/utils/ticketEmbeds.js',
+    'src/handlers/selectHandler.js',
+    'src/commands/ticketpanel.js',
+    'src/commands/ticketpng.js',
+    'src/commands/ticketop.js',
+    'src/commands/ticketpermissionrepair.js',
+  ]) {
+    check('Silindi: ' + f, !fs.existsSync(path.join(kok, f)));
+  }
+  for (const f of ['src/handlers/tickets.js', 'src/utils/ticketViews.js', 'src/commands/ticketkur.js']) {
+    check('Var: ' + f, fs.existsSync(path.join(kok, f)));
+  }
+
+  const kaynak = [];
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '.git' || e.name === 'data') continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.js')) kaynak.push(p);
+    }
+  })(path.join(kok, 'src'));
+  kaynak.push(path.join(kok, 'index.js'));
+
+  for (const [ad, re] of [
+    ['ticketHandler', /require\([^)]*ticketHandler/],
+    ['selectHandler', /require\([^)]*selectHandler/],
+    ['ticketEmbeds', /require\([^)]*ticketEmbeds/],
+    ['ensureTicketPanel', /ensureTicketPanel/],
+  ]) {
+    const bulan = kaynak.filter((f) => re.test(fs.readFileSync(f, 'utf8')));
+    check('Eski referans yok: ' + ad, bulan.length === 0, bulan.map((f) => path.relative(kok, f)).join(', '));
+  }
+
+  // buttonHandler: eski ticket_ öneki artık YENİ handler'a gitmiyor
+  const bh = fs.readFileSync(path.join(kok, 'src/handlers/buttonHandler.js'), 'utf8');
+  check(
+    'buttonHandler: tk_* yeni handler\'a yönlendiriyor',
+    /tickets\.handleOpenButton/.test(bh) && /tickets\.handleTicketButton/.test(bh),
+  );
+  check('buttonHandler: OPEN_KIND ile panel butonları eşleşiyor', /tickets\.OPEN_KIND\[customId\]/.test(bh));
+  check(
+    'buttonHandler: eski ticket_ butonları sessizce yutulmuyor',
+    /startsWith\('ticket_'\)/.test(bh) && /logger\.warn/.test(bh),
+  );
+
+  // ready.js hiçbir panel GÖNDERMİYOR
+  const readySrc = fs.readFileSync(path.join(kok, 'src/events/ready.js'), 'utf8');
+  check('ready.js sendMainPanel çağırmıyor', !/sendMainPanel/.test(readySrc));
+  check('ready.js buildMainPanel çağırmıyor', !/buildMainPanel/.test(readySrc));
+  check('ready.js ticket paneli gönderen kod yok', !/channels\.send|\.send\(\{[\s\S]{0,80}embed/.test(readySrc.slice(0, readySrc.indexOf('Mazeret paneli'))));
+
+  // /ticketkur TEK panel göndericisi (handler tanımı hariç)
+  const cagiranlar = kaynak.filter((f) => /sendMainPanel/.test(fs.readFileSync(f, 'utf8')) && !/handlers[\\/]tickets\.js$/.test(f));
+  check(
+    'Paneli gönderen tek dosya: src/commands/ticketkur.js',
+    cagiranlar.length === 1 && /ticketkur\.js$/.test(cagiranlar[0]),
+    cagiranlar.map((f) => path.relative(kok, f)).join(', '),
+  );
+
+  for (const f of ['createTicket', 'claimTicket', 'closeTicket', 'deleteTicket', 'getAllTickets', 'setTicketPanelMessage']) {
+    check('DB artık export etmiyor: ' + f, typeof db[f] !== 'function');
+  }
+
+  const config = require('../src/config');
+  check('TICKET_CATEGORY_ID = ' + CATEGORY, config.ticket.categoryId === CATEGORY, String(config.ticket.categoryId));
+  check('TICKET_PING_ROLE_ID = ' + PING_ROLE, config.ticket.pingRoleId === PING_ROLE, String(config.ticket.pingRoleId));
+  check(
+    'Kabul rolleri = 1522773986721660928, 1522773983588646982',
+    JSON.stringify(config.ticket.acceptRoleIds) === JSON.stringify(['1522773986721660928', '1522773983588646982']),
+    JSON.stringify(config.ticket.acceptRoleIds),
+  );
+
+  /* ============================================================== */
+  section('8) UÇTAN UCA AKIŞ — gerçek handler, sahte Discord');
+
+  const olusan = [];
+  const guild = {
+    id: G,
+    name: 'WELL SD',
+    roles: { everyone: { id: G } },
+    members: { me: { permissions: { has: () => true }, roles: { highest: { position: 90 } } } },
+    channels: {
+      fetch: async (id) => (id === CATEGORY ? dogruKategori(true) : Promise.reject(new Error('yok'))),
+      create: async (opts) => {
+        const ch = {
+          id: '9990000000000010' + olusan.length,
+          name: opts.name,
+          type: opts.type,
+          parentId: opts.parent,
+          permissionOverwrites: opts.permissionOverwrites,
+          sent: [],
+          deleted: false,
+          isTextBased: () => true,
+          send: async (p) => {
+            ch.sent.push(p);
+            return { id: 'm' + ch.sent.length };
+          },
+          delete: async () => {
+            ch.deleted = true;
+          },
+        };
+        olusan.push(ch);
+        return ch;
+      },
+    },
+  };
+
+  // --- Başvuru ---
+  const ac = sahteEtkilesim({ customId: 'tk_ac_basvuru', channelId: null, userId: U2, staff: false, guild });
+  const acR = await tickets.handleOpenButton(ac, 'basvuru');
+  check('Başvuru butonu işlendi', acR !== false);
+  check('Etkileşim anında ACK edildi (deferReply)', ac._c.deferred === true, JSON.stringify(ac._c));
+  check('1 kanal oluşturuldu', olusan.length === 1, 'olusan: ' + olusan.length);
+  const ch1 = olusan[0];
+  check('Kanal DOĞRU kategoride', ch1?.parentId === CATEGORY, String(ch1?.parentId));
+  check('@everyone kanalı göremez', ch1.permissionOverwrites.find((o) => o.id === G)?.deny.includes(PermissionFlagsBits.ViewChannel));
+  check('Sahip kanala erişebiliyor', ch1.permissionOverwrites.find((o) => o.id === U2)?.allow.includes(PermissionFlagsBits.ViewChannel));
+  check('Bot kanala erişebiliyor', ch1.permissionOverwrites.find((o) => o.id === BOT)?.allow.includes(PermissionFlagsBits.ManageChannels));
+  check('Yetkili rol kanala erişebiliyor', ch1.permissionOverwrites.find((o) => o.id === PING_ROLE)?.allow.includes(PermissionFlagsBits.ViewChannel));
+  check('1 karşılama mesajı gönderildi', ch1.sent.length === 1);
+  const km = ch1.sent[0];
+  check('Mesaj sahibi etiketliyor', km.content.includes('<@' + U2 + '>'), km.content);
+  check('Mesaj yetkili rolü etiketliyor', km.content.includes('<@&' + PING_ROLE + '>'), km.content);
+  check(
+    'allowedMentions yalnızca sahip + rol',
+    JSON.stringify(km.allowedMentions.users) === JSON.stringify([U2]) &&
+      JSON.stringify(km.allowedMentions.roles) === JSON.stringify([PING_ROLE]),
+    JSON.stringify(km.allowedMentions),
+  );
+  check('Karşılama embedi başvuru türü', km.embeds[0].data.author.name.includes('Başvuru'), km.embeds[0].data.author?.name);
+  check('Başvuru karşılamasında 3 buton', km.components[0].toJSON().components.length === 3);
+  check('Ticket DBye yazıldı', db.getTicketByChannel(ch1.id)?.owner_id === U2);
+  check('Kullanıcının açık ticketı var', db.getOpenTicketByUser(G, U2)?.id !== null);
+
+  // Aynı kullanıcı ikinci kez basarsa yeni kanal açılmıyor
+  const ac2 = sahteEtkilesim({ customId: 'tk_ac_sikayet', channelId: null, userId: U2, staff: false, guild });
+  await tickets.handleOpenButton(ac2, 'sikayet');
+  check('Mevcut açık ticket varsa yeni açılmıyor', olusan.length === 1, 'toplam kanal: ' + olusan.length);
+  check('Kullanıcıya kanal linki dönüldü', yanit(ac2).includes(ch1.id), yanit(ac2));
+
+  // --- Şikayet (U1'in bölüm 6'da açık ticket'ı var; temiz kullanıcı kullanılır) ---
+  const U5 = '100000000000000005';
+  const ac3 = sahteEtkilesim({ customId: 'tk_ac_sikayet', channelId: null, userId: U5, staff: false, guild });
+  await tickets.handleOpenButton(ac3, 'sikayet');
+  const ch2 = olusan[olusan.length - 1];
+  check('Şikayet kanalı açıldı', !!ch2 && olusan.length === 2);
+  check('Şikayet: sadece Kapat butonu', ch2.sent[0].components[0].toJSON().components.length === 1);
+  check('Şikayet: kabul/reddet butonu yok', !ch2.sent[0].components[0].toJSON().components.some((c) => c.custom_id === 'tk_kabul'));
+  check('Şikayet: rol etiketleniyor', ch2.sent[0].content.includes('<@&' + PING_ROLE + '>'));
+  check('Şikayet: ticket türü DBde doğru', db.getTicketByChannel(ch2.id)?.kind === 'sikayet');
+
+  // --- Diğer ---
+  const ac4 = sahteEtkilesim({ customId: 'tk_ac_diger', channelId: null, userId: '100000000000000003', staff: false, guild });
+  await tickets.handleOpenButton(ac4, 'diger');
+  const ch3 = olusan[olusan.length - 1];
+  check('Diğer: sadece Kapat butonu', ch3.sent[0].components[0].toJSON().components.length === 1);
+  check('Diğer: ticket türü DBde doğru', db.getTicketByChannel(ch3.id)?.kind === 'diger');
+
+  // --- Kategori yoksa kanal açılmıyor ---
+  const kotuGuild = { ...guild, channels: { fetch: async () => Promise.reject(new Error('yok')), create: guild.channels.create } };
+  const ac5 = sahteEtkilesim({ customId: 'tk_ac_basvuru', channelId: null, userId: '100000000000000004', staff: false, guild: kotuGuild });
+  await tickets.handleOpenButton(ac5, 'basvuru');
+  check('Kategori yoksa kanal açılmıyor', olusan.length === 3, 'toplam kanal: ' + olusan.length);
+  check('Kategori yoksa kullanıcıya hata bildiriliyor', yanit(ac5).toLowerCase().includes('kategori'), yanit(ac5));
+
+  /* --- KABUL: roller gerçekten veriliyor mu --- */
+  // discord.js v14 gibi: member.roles doğrudan Collection (has + add)
+  const verilenRoller = new Set();
+  const rolIdsMap = new Map();
+  const kul = {
+    id: U2,
+    user: { id: U2, tag: 'd27q#0001' },
+    roles: {
+      cache: rolIdsMap,
+      has: (id) => rolIdsMap.has(id),
+      add: async (id) => { verilenRoller.add(id); rolIdsMap.set(id, { id }); },
+    },
+  };
+  const rolGuild = {
+    ...guild,
+    roles: {
+      cache: new Map([
+        ['1522773986721660928', { id: '1522773986721660928', position: 10 }],
+        ['1522773983588646982', { id: '1522773983588646982', position: 11 }],
+      ]),
+      fetch: async (id) => ({ id, position: 10 }),
+    },
+    members: {
+      fetch: async (id) => (id === U2 ? kul : null),
+      me: { permissions: { has: (p) => p === PermissionFlagsBits.ManageRoles }, roles: { highest: { position: 90 } } },
+    },
+  };
+  const kab = sahteEtkilesim({ customId: 'tk_kabul', channelId: ch1.id, userId: STAFF, staff: true, guild: rolGuild });
+  kab.channel = ch1;
+  await tickets.handleTicketButton(kab);
+  check('Kabul: iki rol de verildi',
+    verilenRoller.has('1522773986721660928') && verilenRoller.has('1522773983588646982'),
+    [...verilenRoller].join(','),
+  );
+  check('Kabul: durum accepted oldu', db.getTicketByChannel(ch1.id)?.status === 'accepted');
+  check('Kabul: yetkili DBde kayıtlı', db.getTicketByChannel(ch1.id)?.actor_id === STAFF);
+  check(
+    'Kabul: başvuru sahibine açıkça bildirildi',
+    ch1.sent.some((m) => typeof m.content === 'string' && m.content.includes('<@' + U2 + '>') && m.content.includes('kabul edildi')),
+  );
+
+  // --- KABUL tekrar: duplicate engelleniyor ---
+  const verilen2 = new Set();
+  rolIdsMap.clear();
+  verilenRoller.clear();
+  kul.roles.add = async (id) => { verilen2.add(id); rolIdsMap.set(id, { id }); };
+  const kab2 = sahteEtkilesim({ customId: 'tk_kabul', channelId: ch1.id, userId: STAFF, staff: true, guild: rolGuild });
+  kab2.channel = ch1;
+  await tickets.handleTicketButton(kab2);
+  check('Kabul tekrarı: rol tekrar verilmiyor', verilen2.size === 0, [...verilen2].join(','));
+
+  // --- KABUL kısmi başarısızlık açıkça raporlanıyor ---
+  const tK = db.createTicketSession({ guildId: G, ownerId: U1, kind: 'basvuru' });
+  db.setTicketChannel(tK.id, '999000000000000500');
+  const kul2 = { id: U1, user: { id: U1, tag: 'x#1' }, roles: { cache: new Map(), add: async () => {} } };
+  const kotuRolGuild = {
+    ...rolGuild,
+    channels: { fetch: async () => Promise.reject(new Error('yok')), create: async () => ({ id: 'x', send: async (m) => { kotuMesajlar.push(m); }, deleted: false }) },
+    members: { fetch: async () => kul2, me: { permissions: { has: () => false }, roles: { highest: { position: 90 } } } },
+  };
+  const kotuMesajlar = [];
+  kotuRolGuild.channels.create = async () => ({
+    id: '999000000000000500',
+    sent: kotuMesajlar,
+    send: async (m) => { kotuMesajlar.push(m); return {}; },
+    delete: async () => {},
+  });
+  const kab3 = sahteEtkilesim({ customId: 'tk_kabul', channelId: '999000000000000500', userId: STAFF, staff: true, guild: kotuRolGuild });
+  kab3.channel = { send: async (m) => { kotuMesajlar.push(m); return {}; } };
+  await tickets.handleTicketButton(kab3);
+  check(
+    'Kabul: rol verilemezse durum "kabul edilmiş" SAYILMAZ',
+    db.getTicketByChannel('999000000000000500')?.status === 'open',
+    db.getTicketByChannel('999000000000000500')?.status,
+  );
+  check(
+    'Kabul: kısmi başarısızlık kanalda açıkça raporlanıyor',
+    kotuMesajlar.some((m) => typeof m.content === 'string' && /başarısız|verilemedi/i.test(m.content)),
+    JSON.stringify(kotuMesajlar.map((m) => m.content || '(embed)')),
+  );
+
+  /* --- RET --- */
+  const tR = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'basvuru' });
+  db.setTicketChannel(tR.id, '999000000000000600');
+  const retMesajlar = [];
+  const ret = sahteEtkilesim({ customId: 'tk_reddet', channelId: '999000000000000600', userId: STAFF, staff: true });
+  ret.channel = { send: async (m) => { retMesajlar.push(m); return {}; } };
+  await tickets.handleTicketButton(ret);
+  check('Ret: durum rejected oldu', db.getTicketByChannel('999000000000000600')?.status === 'rejected');
+  check(
+    'Ret: "<@id> başvurunuz reddedildi." mesajı gönderildi',
+    retMesajlar.some((m) => m.content === '<@' + U2 + '> başvurunuz reddedildi.'),
+    JSON.stringify(retMesajlar.map((m) => m.content || '(embed)')),
+  );
+  check('Ret: allowedMentions sahibi sınırlandı', (retMesajlar.find((m) => m.content)?.allowedMentions?.users || []).includes(U2));
+
+  /* --- KAPAT: mesaj + 5sn + yalnızca o kanal --- */
+  const silinen = [];
+  const tC = db.createTicketSession({ guildId: G, ownerId: U2, kind: 'basvuru' });
+  db.setTicketChannel(tC.id, '999000000000000700');
+  const kapatMesajlar = [];
+  const kapat = sahteEtkilesim({ customId: 'tk_kapat', channelId: '999000000000000700', userId: U2, staff: false });
+  kapat.guild = {
+    channels: {
+      fetch: async (id) => ({
+        id,
+        delete: async () => silinen.push(id),
+        send: async (m) => { kapatMesajlar.push(m); return {}; },
+      }),
+    },
+  };
+  kapat.channel = { send: async (m) => { kapatMesajlar.push(m); return {}; } };
+  await tickets.handleTicketButton(kapat);
+  check('Kapat: "5 saniye içerisinde siliniyor" mesajı gönderildi', kapatMesajlar.includes('\u{1F512} Bu ticket 5 saniye içerisinde siliniyor.'), JSON.stringify(kapatMesajlar));
+  check('Kapat: durum closed oldu', db.getTicketByChannel('999000000000000700')?.status === 'closed');
+
+  // ikinci kez basılırsa ikinci silme görevi BAŞLATILMAZ
+  const kapat2 = sahteEtkilesim({ customId: 'tk_kapat', channelId: '999000000000000700', userId: STAFF, staff: true });
+  kapat2.guild = kapat.guild;
+  kapat2.channel = kapat.channel;
+  await tickets.handleTicketButton(kapat2);
+  const zamanlayiciSayisi = [...tickets._silmeZamanlayici.keys()].filter((k) => k === '999000000000000700').length;
+  check('Kapat: aynı kanal için tek silme görevi', zamanlayiciSayisi === 1, 'adet: ' + zamanlayiciSayisi);
+
+  // 5 saniye bekle, sonra doğrula
+  console.log('\n  ... 5 saniye bekleniyor (Kapat akışının silme adımı doğrulanıyor) ...');
+  await new Promise((r) => setTimeout(r, 5600));
+  check('Kapat: 5sn sonra yalnızca ilgili kanal silindi', silinen.length === 1 && silenede(silinen), silinen.join(','));
+  function silenede(l) {
+    return l[0] === '999000000000000700';
+  }
+  check('Kapat: kategori/panel silinmedi', !silinen.includes(CATEGORY));
+
+  /* ============================================================== */
+  console.log('\n' + '='.repeat(66));
+  console.log('  SONUÇ:  ' + pass + ' başarılı / ' + (pass + fail) + ' toplam  /  ' + fail + ' başarısız');
+  console.log('='.repeat(66));
+
+  db.closeDatabase();
+  try { fs.unlinkSync(process.env.DB_PATH); } catch { /* dosya zaten yok */ }
+  process.exit(fail ? 1 : 0);
+})();

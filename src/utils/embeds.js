@@ -376,6 +376,24 @@ function buildJoinLogEmbed({ member, guild }) {
   return embed;
 }
 
+
+/** /setup komutunun sonuç embed'i (ticketEmbeds.js silindi, buraya taşındı). */
+function buildSetupResultEmbed(result) {
+  const state = result.created ? '🆕 Yeni oluşturuldu' : result.adopted ? '♻️ Mevcut kanal devralındı' : '✅ Zaten kurulu';
+  const embed = baseEmbed()
+    .setTitle('🛠️ Ticket Log Kurulumu')
+    .setDescription(
+      `📋 **Log Kanalı:** <#${result.logChannelId}> (${state})\n` +
+        (result.envUpdated
+          ? '⚙️ `.env` güncellendi ve ayar anında aktif — **yeniden başlatma gerekmez**.'
+          : '⚠️ `.env` yazılamadı — kanal ID’sini `TICKET_LOG_CHANNEL_ID` alanına elle yazın.'),
+    );
+  for (const c of result.checks || []) {
+    embed.addFields({ name: `${c.ok ? '✅' : '⚠️'} ${c.label}`, value: trunc(c.detail || '—', 1024), inline: false });
+  }
+  return embed;
+}
+
 module.exports = {
   formatUserList,
   buildIngameEmbed,
@@ -383,6 +401,7 @@ module.exports = {
   buildDmResultEmbed,
   buildClearEmbed,
   buildErrorEmbed,
+  buildSetupResultEmbed,
   buildSuccessEmbed,
   buildIcPanelEmbed,
   buildIcButtons,

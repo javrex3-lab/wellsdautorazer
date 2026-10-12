@@ -18,9 +18,6 @@ const GROUPS = [
   {
     title: '🎫 Destek',
     commands: [
-      ['/ticketpanel', 'Ticket açma paneli gönderir'],
-      ['/ticketpng', 'Ticket panel görselini değiştirir'],
-      ['/ticketop', 'En fazla ticket sahiplenen ilk 10 yetkiliyi gösterir'],
       ['/mazeret', 'Mazeret bildirim paneli gönderir'],
       ['/mazeretpng', 'Mazeret panel görselini değiştirir'],
     ],

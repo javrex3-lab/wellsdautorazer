@@ -161,7 +161,7 @@ async function handleOpenButton(interaction, kind) {
   const acik = getOpenTicketByUser(guild.id, interaction.user.id);
   if (acik) {
     return safeEdit(interaction, {
-      embeds: [buildErrorEmbed(`Zaten açık bir ticket'ınız var: <#${acik.channel_id}>.`)],
+      embeds: [buildErrorEmbed(`Zaten açık bir ticketınız var: <#${acik.channel_id}>.`)],
     });
   }
 
@@ -316,9 +316,19 @@ async function safeUpdate(interaction, payload) {
   try {
     return await interaction.update(payload);
   } catch (err) {
+    // Etkileşim Discord tarafında düştüyse (10062) veya zaten yanıtlandıysa (40060)
+    // aynı içeriği editReply ile göndermeyi dener.
     if (err?.code === 10062 || err?.code === 40060) {
-      try { return await interaction.editReply(payload); } catch { /* yoksay */ }
-      return null;
+      try {
+        return await interaction.editReply(payload);
+      } catch (alt) {
+        // Hata GİZLENMEZ: kullanıcı neden yanıt alamadığını loglardan görebilmeli.
+        logger.warn(
+          `Etkileşim yanıtı düşürüldü (${err.code}) ve editReply de başarısız ` +
+            `(${alt.code || 'bilinmiyor'} ${alt.message}) — kullanıcı mesaj göremeyecek.`,
+        );
+        return null;
+      }
     }
     logger.warn(`Mesaj güncellenemedi: ${err.code || err.message}`);
     return null;
@@ -340,7 +350,7 @@ async function handleAccept(interaction) {
 
   const guild = interaction.guild;
   const ownerId = ticket.owner_id; // ← DB'den, güvenilir
-  const owner = await guild.members.fetch(ownerId).catch(() => null);
+  const owner = await guild?.members?.fetch?.(ownerId).catch(() => null);
   if (!owner) {
     return safeUpdate(interaction, {
       embeds: [
@@ -375,7 +385,11 @@ async function handleAccept(interaction) {
       sonuclar.push({ roleId, ok: false, note: 'bot rolünün altında' });
       continue;
     }
-    if (owner.roles.cache.has(roleId)) {
+    // discord.js v14: member.roles doğrudan Collection'dır (.cache YOK).
+    // v13 uyumluluğu için ikisine de bakılır.
+    const zatenVar =
+      owner.roles?.cache?.has?.(roleId) === true || owner.roles?.has?.(roleId) === true;
+    if (zatenVar) {
       sonuclar.push({ roleId, ok: true, note: 'zaten vardı' });
       continue;
     }
@@ -436,7 +450,7 @@ async function handleReject(interaction) {
   if (!ticket) return safeReplyGone(interaction);
   // Yalnızca BAŞVURU türünde çalışır
   if (ticket.kind !== 'basvuru') {
-    return safeEdit(interaction, { content: '⛔ Bu işlem yalnızca başvuru ticket'larında çalışır.' });
+    return safeEdit(interaction, { content: '⛔ Bu işlem yalnızca Başvuru türündeki ticketlarda çalışır.' });
   }
   if (ticket.status !== 'open') {
     return safeEdit(interaction, { content: `ℹ️ Bu ticket zaten **${durumAdi(ticket.status)}**.` });
@@ -448,7 +462,7 @@ async function handleReject(interaction) {
   await interaction.deferUpdate().catch(() => {});
   setTicketStatus(ticket.id, 'rejected', { actorId: interaction.user.id });
 
-  const owner = await interaction.guild.members.fetch(ticket.owner_id).catch(() => null);
+  const owner = await interaction.guild?.members?.fetch?.(ticket.owner_id).catch(() => null);
   const embed = buildTicketEmbed({
     kind: ticket.kind,
     ownerId: ticket.owner_id,

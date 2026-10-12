@@ -165,69 +165,26 @@ const config = {
   // Bir field max 1024 karakter olabilir. Bu sayıdan sonra "+X kişi daha" gösterilir.
   maxMentionsPerField: int('MAX_MENTIONS_PER_FIELD', 40),
 
-  // --- Ticket sistemi ---
+  // --- YENİ TICKET SİSTEMİ ---
   ticket: {
-    // Sabit staff rol — env boşsa bile 1522773972393922730 kullanılır (hard-code yasak değil, merkezi constant)
-    staffRoleId: (() => {
-      const v = (process.env.TICKET_STAFF_ROLE_ID || '').trim();
-      if (/^\d{17,20}$/.test(v)) return v;
-      return STAFF_TICKET_ROLE_ID;
-    })(),
+    // Tüm ticket kanalları buraya açılır (GuildCategory olmalı).
     categoryId: (process.env.TICKET_CATEGORY_ID || '').trim() || null,
-    logChannelId: (process.env.TICKET_LOG_CHANNEL_ID || '').trim() || null,
+    // Panelde tek yol: /ticketkur. Bot açılışında panel gönderilmez.
     panelChannelId: (process.env.TICKET_PANEL_CHANNEL_ID || '').trim() || null,
-    logEnabled: (process.env.TICKET_LOG_ENABLED || 'true').toLowerCase() !== 'false',
-    // Varsayılan panel görseli. /ticketpng ile değiştirilir (DB'deki değer önceliklidir).
-    panelImage: (process.env.TICKET_PANEL_IMAGE || '').trim() || null,
-    maxOpenPerUser: int('TICKET_MAX_OPEN_PER_USER', 1),
-    callCooldownMs: int('TICKET_CALL_COOLDOWN_MS', 300000), // Yetkili Çağır bekleme süresi (5 dk)
-    // Yeni ticket açıldığında etiketlenecek rol (boşsa ping atılmaz).
+    // Ticket açıldığında etiketlenecek rol (her tür için aynı).
     pingRoleId: (process.env.TICKET_PING_ROLE_ID || '').trim() || null,
-    // Açık ticketları salt-okunur görebilecek rol (boşsa ek izin verilmez).
-    viewerRoleId: (process.env.TICKET_VIEWER_ROLE_ID || '').trim() || null,
-    // Başvuru kabulünde ticket sahibine verilen roller.
-    // .env'de TICKET_ACCEPT_ROLE_IDS virgüllü liste olarak ezilebilir.
-    acceptRoleIds: (() => {
-      const env = idList('TICKET_ACCEPT_ROLE_IDS');
-      return env.length ? env : [...ACCEPT_ROLE_IDS];
+    // Ticket kanalına tam erişim alacak yetkili roller.
+    staffRoleIds: (() => {
+      const base = idList('TICKET_STAFF_ROLE_IDS');
+      const legacy = (process.env.TICKET_STAFF_ROLE_ID || '').trim();
+      if (/^\d{17,20}$/.test(legacy) && !base.includes(legacy)) base.push(legacy);
+      if (!base.includes(STAFF_TICKET_ROLE_ID)) base.push(STAFF_TICKET_ROLE_ID);
+      return base;
     })(),
-    color: 0x5865f2, // premium blurple
-    panelAbout:
-      process.env.TICKET_PANEL_ABOUT ||
-      'Aşağıdaki seçeneklerden uygun olanı seçerek hemen bir ticket oluşturabilirsiniz.',
-    panelInfo:
-      process.env.TICKET_PANEL_INFO || 'Sunucumuzun kurallarını okumayı unutmayın.',
-    // Kategoriler: key benzersiz olmalı (label ≤100, description ≤100 karakter).
-    // Yeni kategori eklemek için listeye satır eklemeniz yeterli.
-    // formQuestions doluysa ticket açılışında forma soruları ayrı mesaj olarak gönderilir.
-    categories: [
-      {
-        key: 'basvuru',
-        label: 'Başvuru',
-        description: 'Başvuru yapmak için seçiniz.',
-        emoji: '📄',
-        formTitle: '📝 Başvuru Formu',
-        formIntro: 'Lütfen aşağıdaki soruları eksiksiz yanıtlayın. Başvurunuz yetkili ekip tarafından incelenecektir.',
-        formQuestions: [
-          'Yaş:',
-          'FiveM Saatiniz:',
-          'Legal Rol Yaptınız mı?:',
-          'Hangi Ekiplerde Oynadınız?:',
-          'Kurallara ve hiyerarşik düzene uyacağınızı onaylıyor musunuz?:',
-          'Neden başvurmak istiyorsunuz?:',
-          "Saat 21.00'den sonra zorunlu 2 saat aktifliği onaylıyor musunuz? (Discord ses kanalında bulunmak dahil):",
-          '5 Kill POV:',
-        ],
-      },
-      { key: 'sikayet', label: 'Sorun & Şikayet', description: 'Sorun veya şikayetinizi bildirmek için seçiniz.', emoji: '⚠️' },
-      { key: 'diger', label: 'Diğer Kategoriler', description: 'Sebebiniz listede yoksa bu kategoriyi seçiniz.', emoji: '🐯' },
-    ],
+    // Kabul Edildiğinde verilecek roller (sırayla denenir, sonuç raporlanır).
+    acceptRoleIds: idList('TICKET_ACCEPT_ROLE_IDS'),
+    color: 0x5865f2,
   },
-
-  // --- Panel görselleri (opsiyonel banner; boşsa görsel gösterilmez) ---
-  // Doğrudan görsel URL'si yazın (https://...png/jpg). Embed'i geniş ve premium gösterir.
-  ingamePanelImage: (process.env.INGAME_PANEL_IMAGE || '').trim() || null,
-  aktiflikPanelImage: (process.env.AKTIFLIK_PANEL_IMAGE || '').trim() || null,
 
   // --- IC isim onay kanalı ---
   // Bu kanala yazılan her mesaj için onay paneli açılır (Onayla/Reddet).

@@ -23,7 +23,7 @@ const {
 } = require('../database/database');
 const ingameCmd = require('../commands/ingame');
 const aktiflikCmd = require('../commands/aktiflik');
-const ticketHandler = require('./ticketHandler');
+const tickets = require('./tickets');
 const { handleIcButton } = require('./icHandler');
 const { handleMazeretOpen, handleMazeretRefresh, REFRESH_BTN } = require('./mazeretHandler');
 const { handleQuitButton } = require('./quitHandler');
@@ -40,10 +40,27 @@ function inferType(customId) {
 async function handleButton(interaction) {
   const { customId } = interaction;
 
-  // Ticket butonları ayrı handler'da (aynı giriş noktası, süre logları korunur)
-  if (typeof customId === 'string' && customId.startsWith('ticket_')) {
-    return ticketHandler.handleTicketButton(interaction);
+  // ================= YENİ TICKET SİSTEMİ =================
+  // 1) Ana panel butonları (tk_ac_basvuru / tk_ac_sikayet / tk_ac_diger)
+  if (tickets.OPEN_KIND[customId]) {
+    return tickets.handleOpenButton(interaction, tickets.OPEN_KIND[customId]);
   }
+  // 2) Ticket kanalı butonları (tk_kabul / tk_reddet / tk_kapat)
+  if (customId === tickets.CID.KABUL || customId === tickets.CID.REDDET || customId === tickets.CID.KAPAT) {
+    return tickets.handleTicketButton(interaction);
+  }
+  // 3) ESKİ ticket_ butonları artık tanınmaz — sessizce yutulmaz, kullanıcıya söylenir.
+  if (typeof customId === 'string' && customId.startsWith('ticket_')) {
+    logger.warn(`ESKİ ticket butonu kullanıldı (artık desteklenmiyor): ${customId}`);
+    return interaction
+      .reply({
+        embeds: [buildErrorEmbed('Bu buton eski ticket sistemine ait ve çalışmıyor. Yeni ticket panelinden başvurunuzu oluşturun.')],
+        flags: MessageFlags.Ephemeral,
+      })
+      .then(() => true)
+      .catch(() => true);
+  }
+  // =========================================================
 
   // Çekiliş reroll butonu: giveaway_reroll:<id> (restart-safe, DB'den çözülür)
   if (typeof customId === 'string' && customId.startsWith('giveaway_reroll:')) {

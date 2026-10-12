@@ -239,6 +239,7 @@ module.exports = {
   initDatabase,
   migrate,
   getDb,
+  // --- Sistem ---
   upsertSystem,
   getSystem,
   getAllSystems,
@@ -248,27 +249,11 @@ module.exports = {
   getIngameStatus,
   addAktiflikParticipant,
   getAktiflikList,
-  // --- Ticket sistemi ---
-  createTicket,
-  getTicket,
-  getTicketByChannel,
-  getOpenTicket,
-  countOpenTickets,
-  setTicketChannel,
-  setTicketPanelMessage,
-  claimTicket,
-  closeTicket,
-  setTicketDecision,
-  deleteTicket,
-  incrementClaimStat,
-  getTopClaimers,
-  getAllTickets,
+  // --- Kalıcı ayarlar ---
   getSetting,
   setSetting,
   deleteSetting,
-  upsertTicketPanel,
-  getTicketPanel,
-  // --- Yeni ticket sistemi ---
+  // --- YENİ TICKET SİSTEMİ ---
   createTicketSession,
   setTicketChannel,
   getTicketByChannel,
@@ -278,6 +263,7 @@ module.exports = {
   upsertTicketPanel,
   getTicketPanel,
   deleteTicketPanel,
+  // --- Mazeret panel ---
   upsertMazeretPanel,
   getMazeretPanel,
   // --- Mazeret kayıtları ---
@@ -297,7 +283,6 @@ module.exports = {
   getApprovedIc,
   decideIc,
   setIcPanel,
-  setTicketLogMessage,
   // --- Quit takibi ---
   trackMemberRoles,
   getMemberRoles,
@@ -313,7 +298,7 @@ module.exports = {
   getGuardSettings,
   saveGuardSettings,
   countGuardGuilds,
-  // --- Yeni log kanal kayıtları ---
+  // --- Log kanal kayıtları ---
   getGuardLogChannels,
   getGuardLogChannel,
   setGuardLogChannel,
@@ -348,131 +333,19 @@ module.exports = {
   updateGiveawayWinners,
 };
 
-// ---------- Ticket kayıtları ----------
 
-function createTicket({ guildId, userId, channelId, panelMessageId, categoryKey, categoryLabel }) {
-  try {
-    const res = getDb()
-      .prepare(
-        `INSERT INTO tickets (guild_id, user_id, channel_id, panel_message_id, category_key, category_label, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'open', ?)`,
-      )
-      .run(
-        String(guildId),
-        String(userId),
-        String(channelId),
-        panelMessageId ? String(panelMessageId) : null,
-        String(categoryKey),
-        String(categoryLabel),
-        Date.now(),
-      );
-    return Number(res.lastInsertRowid);
-  } catch (err) {
-    logger.error(`[DB] createTicket failed: ${guildId}/${userId}`, err);
-    throw err;
-  }
-}
 
-function getTicket(id) {
-  try {
-    return getDb().prepare('SELECT * FROM tickets WHERE id = ?').get(Number(id)) || null;
-  } catch (err) {
-    logger.error(`[DB] getTicket failed: ${id}`, err);
-    return null;
-  }
-}
 
-function getTicketByChannel(channelId) {
-  try {
-    return getDb().prepare('SELECT * FROM tickets WHERE channel_id = ?').get(String(channelId)) || null;
-  } catch (err) {
-    logger.error(`[DB] getTicketByChannel failed: ${channelId}`, err);
-    return null;
-  }
-}
 
 /** Kullanıcının açık ticket'ı (duplicate engelleme için). */
-function getOpenTicket(guildId, userId) {
-  try {
-    return (
-      getDb()
-        .prepare("SELECT * FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1")
-        .get(String(guildId), String(userId)) || null
-    );
-  } catch (err) {
-    logger.error(`[DB] getOpenTicket failed: ${guildId}/${userId}`, err);
-    return null;
-  }
-}
 
-function countOpenTickets(guildId, userId) {
-  try {
-    const row = getDb()
-      .prepare("SELECT COUNT(*) AS c FROM tickets WHERE guild_id = ? AND user_id = ? AND status = 'open'")
-      .get(String(guildId), String(userId));
-    return Number(row?.c || 0);
-  } catch (err) {
-    logger.error(`[DB] countOpenTickets failed: ${guildId}/${userId}`, err);
-    return 0;
-  }
-}
 
-function setTicketChannel(id, channelId) {
-  try {
-    getDb().prepare('UPDATE tickets SET channel_id = ? WHERE id = ?').run(String(channelId), Number(id));
-  } catch (err) {
-    logger.error(`[DB] setTicketChannel failed: ${id}`, err);
-    throw err;
-  }
-}
 
-function setTicketPanelMessage(id, panelMessageId) {
-  try {
-    getDb().prepare('UPDATE tickets SET panel_message_id = ? WHERE id = ?').run(String(panelMessageId), Number(id));
-  } catch (err) {
-    logger.error(`[DB] setTicketPanelMessage failed: ${id}`, err);
-  }
-}
 
-function claimTicket(id, staffId) {
-  try {
-    getDb().prepare('UPDATE tickets SET claimed_by = ?, claimed_at = ? WHERE id = ?').run(String(staffId), Date.now(), Number(id));
-  } catch (err) {
-    logger.error(`[DB] claimTicket failed: ${id}`, err);
-    throw err;
-  }
-}
 
-function closeTicket(id, closedBy) {
-  try {
-    getDb()
-      .prepare("UPDATE tickets SET status = 'closed', closed_at = ?, closed_by = ? WHERE id = ?")
-      .run(Date.now(), closedBy ? String(closedBy) : null, Number(id));
-  } catch (err) {
-    logger.error(`[DB] closeTicket failed: ${id}`, err);
-    throw err;
-  }
-}
 
 /** Başvuru kararı kaydet (decision: 'accepted' | 'rejected'). */
-function setTicketDecision(id, decision, decidedBy) {
-  try {
-    getDb()
-      .prepare('UPDATE tickets SET decision = ?, decided_by = ?, decided_at = ? WHERE id = ?')
-      .run(decision, decidedBy ? String(decidedBy) : null, Date.now(), Number(id));
-  } catch (err) {
-    logger.error(`[DB] setTicketDecision failed: ${id}`, err);
-    throw err;
-  }
-}
 
-function deleteTicket(id) {
-  try {
-    getDb().prepare('DELETE FROM tickets WHERE id = ?').run(Number(id));
-  } catch (err) {
-    logger.error(`[DB] deleteTicket failed: ${id}`, err);
-  }
-}
 
 // ---------- Ticket sahiplenme istatistikleri (sunucu bazlı, kalıcı) ----------
 
@@ -480,43 +353,9 @@ function deleteTicket(id) {
  * Gerçek bir sahiplenmede +1. Sadece claim anında çağrılır (kapanışta ASLA).
  * Negatif olamaz (CHECK + clamp).
  */
-function incrementClaimStat(guildId, userId) {
-  try {
-    getDb()
-      .prepare(
-        'INSERT INTO ticket_stats (guild_id, user_id, claimed_count, updated_at) VALUES (?, ?, 1, ?) ' +
-          'ON CONFLICT(guild_id, user_id) DO UPDATE SET claimed_count = max(0, claimed_count) + 1, updated_at = excluded.updated_at',
-      )
-      .run(String(guildId), String(userId), Date.now());
-  } catch (err) {
-    logger.error(`[DB] incrementClaimStat failed: ${guildId}/${userId}`, err);
-    throw err;
-  }
-}
 
 /** En çok sahiplenenler: sayı azalan, eşitlikte userId artan (deterministik). */
-function getTopClaimers(guildId, limit = 10) {
-  try {
-    const n = Math.max(1, Math.min(100, Number(limit) || 10));
-    return getDb()
-      .prepare('SELECT user_id, claimed_count FROM ticket_stats WHERE guild_id = ? ORDER BY claimed_count DESC, user_id ASC LIMIT ?')
-      .all(String(guildId), n)
-      .map((r) => ({ user_id: String(r.user_id), claimed_count: Math.max(0, Number(r.claimed_count) || 0) }))
-      .filter((r) => r.user_id);
-  } catch (err) {
-    logger.error(`[DB] getTopClaimers failed: ${guildId}`, err);
-    return [];
-  }
-}
 
-function getAllTickets() {
-  try {
-    return getDb().prepare('SELECT * FROM tickets ORDER BY id ASC').all();
-  } catch (err) {
-    logger.error('[DB] getAllTickets failed.', err);
-    return [];
-  }
-}
 
 // ---------- Kalıcı ayarlar (key-value) ----------
 
@@ -554,28 +393,7 @@ function deleteSetting(key) {
 
 // ---------- Ticket panel mesajı (sunucu başına tek) ----------
 
-function upsertTicketPanel(guildId, channelId, messageId) {
-  try {
-    getDb()
-      .prepare(
-        `INSERT INTO ticket_panels (guild_id, channel_id, message_id, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = excluded.updated_at`,
-      )
-      .run(String(guildId), String(channelId), String(messageId), Date.now());
-  } catch (err) {
-    logger.error(`[DB] upsertTicketPanel failed: ${guildId}`, err);
-    throw err;
-  }
-}
 
-function getTicketPanel(guildId) {
-  try {
-    return getDb().prepare('SELECT * FROM ticket_panels WHERE guild_id = ?').get(String(guildId)) || null;
-  } catch (err) {
-    logger.error(`[DB] getTicketPanel failed: ${guildId}`, err);
-    return null;
-  }
-}
 
 // ---------- Mazeret panel mesajı (sunucu başına tek) ----------
 
@@ -1054,13 +872,6 @@ function decideIc(panelMessageId, status, decidedBy) {
 
 // ---------- Ticket log mesajı (tek-mesaj logu için) ----------
 
-function setTicketLogMessage(id, logMessageId) {
-  try {
-    getDb().prepare('UPDATE tickets SET log_message_id = ? WHERE id = ?').run(String(logMessageId), Number(id));
-  } catch (err) {
-    logger.error(`[DB] setTicketLogMessage failed: ${id}`, err);
-  }
-}
 
 // ---------- Guard whitelist + ayarlar ----------
 

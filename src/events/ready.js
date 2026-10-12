@@ -4,7 +4,7 @@
  */
 const { ActivityType, Routes } = require('discord.js');
 const config = require('../config');
-const { getAllSystems, getAllTickets, deleteTicket, countGuardGuilds } = require('../database/database');
+const { getAllSystems, countGuardGuilds } = require('../database/database');
 const { getSavedVoiceChannel, joinVoice, leaveVoice } = require('../handlers/voiceHandler');
 const logger = require('../utils/logger');
 
@@ -24,39 +24,9 @@ module.exports = {
       logger.error('Aktif paneller yüklenirken hata.', err);
     }
 
-    // Ticket uzlaşması: bot kapalıyken silinen kanalların DB kayıtlarını temizle.
-    try {
-      const tickets = getAllTickets();
-      const open = tickets.filter((t) => t.status === 'open').length;
-      let pruned = 0;
-      for (const t of tickets) {
-        try {
-          const ch = await client.channels.fetch(t.channel_id).catch(() => null);
-          if (!ch) {
-            deleteTicket(t.id);
-            pruned++;
-          }
-        } catch {
-          /* tek ticket hatası diğerlerini engellemez */
-        }
-      }
-      logger.info(`Ticketlar yüklendi: ${open} açık (toplam ${tickets.length})${pruned ? `, ${pruned} ölü kayıt temizlendi` : ''}`);
-    } catch (err) {
-      logger.error('Ticketlar yüklenirken hata.', err);
-    }
 
-    // Staff ticket rolü + görüntüleyici rol: açık ticketlara geriye dönük izin uygula (spec 7,8)
-    try {
-      const { syncStaffTicketPermissions, syncTicketViewerRole } = require('../handlers/ticketHandler');
-      const staffRes = await syncStaffTicketPermissions(client);
-      const viewRes = await syncTicketViewerRole(client);
-      if (staffRes.checked || viewRes.synced || staffRes.failed || viewRes.failed) {
-        logger.info(`Ticket permission repair tamam: staff ${staffRes.fixed}/${staffRes.checked} düzeltildi, viewer ${viewRes.synced} düzeltildi.`);
-      }
-    } catch (err) {
-      logger.error('Ticket permission senkronunda hata.', err);
-    }
-
+    // Eski ticketHandler izin senkronu kaldırıldı: yeni sistem kanal iznini
+    // ticket açılırken kendisi verir (src/handlers/tickets.js).
     // ---- Mazeret paneli: yetkili listesi canlı takip + süre sonu temizliği ----
     try {
       const { startMazeretTicker, adminChannelId } = require('../handlers/mazeretHandler');
@@ -66,42 +36,7 @@ module.exports = {
       logger.error('Mazeret takibi başlatılamadı.', err);
     }
 
-    // ---- Ticket paneli sağlık kontrolü ----
-    // Panel mesajı silinmişse DB eski ID'ye bakar ve kimse fark etmez;
-    // sunucuda basılacak panel kalmaz. Ölüyse aynı kanala yeniden gönderir.
-    try {
-      const { ensureTicketPanel } = require('../handlers/ticketHandler');
-      const durumlar = [];
-      for (const [, g] of client.guilds.cache) {
-        try {
-          const r = await ensureTicketPanel(client, g);
-          durumlar.push(`${g.id}:${r.action}`);
-          if (r.ok && r.action === 'yeniden_olusturuldu') {
-            logger.success(`Ticket paneli düzeltildi (guild ${g.id}). Artık **/ticketpanel** çalıştırmana gerek yok.`);
-          }
-        } catch (err) {
-          logger.debug(`Ticket paneli kontrolü atlandı (guild ${g.id}): ${err.message}`);
-        }
-      }
-      if (durumlar.length) logger.info(`Ticket paneli durumu: ${durumlar.join(', ')}`);
-
-      // Silme/işlem sonrası kendini onar: 5 dakikada bir yeniden doğrula.
-      const panelTimer = setInterval(async () => {
-        for (const [, g] of client.guilds.cache) {
-          try {
-            const r = await ensureTicketPanel(client, g);
-            if (r.action === 'yeniden_olusturuldu') {
-              logger.error(`Ticket paneli yine silinmiş ve otomatik yeniden gönderildi (guild ${g.id}). Panel kanalına biri dokunuyor olabilir.`);
-            }
-          } catch {
-            /* sunucu erişilemez */
-          }
-        }
-      }, 5 * 60 * 1000);
-      if (typeof panelTimer.unref === 'function') panelTimer.unref();
-    } catch (err) {
-      logger.error('Ticket paneli kontrolü başlatılamadı.', err);
-    }
+    // Ticket paneli bilinçli olarak OTOMATİK gönderilmez (yalnız /ticketkur).
 
     // ---- FiveM canlı paneli (Yöntem A/B/C durumunu tek mesajda gösterir) ----
     // Kanal tanımlı değilse no-op çalışır; botu etkilemez.
@@ -112,27 +47,30 @@ module.exports = {
       logger.error('FiveM paneli başlatılamadı.', err);
     }
 
-    // Kategori seviye staff izni (spec 6) — sadece bir kez, kanal overwrite zaten yeterli ama kategori de düzelsin
+    // Ticket kategorisine yetkili rol erişimi (yeni sistemle uyumlu).
+    // Panel GÖNDERMEZ — sadece kanal izinlerini hazırlar.
     try {
+      const { PermissionFlagsBits } = require("discord.js");
+      const rolIds = (config.ticket.staffRoleIds || []).filter((r) => /^\d{17,20}$/.test(String(r)));
       const catId = config.ticket.categoryId;
-      const staffId = config.STAFF_TICKET_ROLE_ID || '1522773972393922730';
-      if (catId && staffId) {
+      if (catId && rolIds.length) {
         for (const [, guild] of client.guilds.cache) {
-          try {
-            const cat = await guild.channels.fetch(catId).catch(() => null);
-            if (!cat || cat.type !== 4) continue; // 4 = GuildCategory
-            const existing = cat.permissionOverwrites.cache.get(staffId);
-            const hasView = existing?.allow?.has?.(require('discord.js').PermissionFlagsBits.ViewChannel);
-            if (!hasView) {
-              await cat.permissionOverwrites.edit(staffId, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true }, 'Ticket kategori staff erişimi (startup)').catch(() => {});
-              logger.info(`Kategori ${cat.id} staff overwrite eklendi (guild ${guild.id})`);
-            }
-          } catch {}
+          const cat = await guild.channels.fetch(catId).catch(() => null);
+          if (!cat || cat.type !== 4) continue; // 4 = GuildCategory
+          for (const roleId of rolIds) {
+            const mevcut = cat.permissionOverwrites.cache.get(roleId);
+            if (mevcut?.allow?.has?.(PermissionFlagsBits.ViewChannel)) continue;
+            await cat.permissionOverwrites
+              .edit(roleId, { ViewChannel: true, ReadMessageHistory: true, SendMessages: true }, "Ticket kategorisi yetkili erişimi")
+              .catch((err) => logger.warn(`Kategori izni verilemedi (${roleId}): ${err.code || err.message}`));
+            logger.info(`Kategori ${cat.id} icin rol ${roleId} erişimi açıldı`);
+          }
         }
       }
     } catch (err) {
-      logger.debug(`Kategori staff overwrite kontrolü atlandı: ${err.message}`);
+      logger.warn(`Ticket kategori izin kontrolu atlandi: ${err.message}`);
     }
+
 
     try {
       logger.info(`Guard: ${countGuardGuilds()} sunucuda aktif`);
