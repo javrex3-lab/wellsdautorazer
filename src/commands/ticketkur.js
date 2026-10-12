@@ -8,7 +8,7 @@ const { SlashCommandBuilder, ChannelType, PermissionFlagsBits, MessageFlags } = 
 const config = require('../config');
 const { buildErrorEmbed, buildSuccessEmbed } = require('../utils/embeds');
 const { canManageTickets } = require('../utils/permissions');
-const { sendMainPanel, resolveTicketCategory } = require('../handlers/tickets');
+const { sendMainPanel, resolveTicketCategory, KATEGORI_HATASI } = require('../handlers/tickets');
 const logger = require('../utils/logger');
 
 module.exports = {
@@ -37,10 +37,17 @@ module.exports = {
     // Kategori doğrulanır — yanlış yere panel/ticket açılmasın.
     const cat = await resolveTicketCategory(interaction.guild);
     if (!cat.ok) {
-      logger.error(`/ticketkur: kategori uygun değil (${cat.reason})`);
+      // Teknik detay SADECE konsola yazılır (token/gizli değer içermez).
+      // Kullanıcıya yalnızca gerçek sebebin açıklaması gösterilir.
+      logger.error(`/ticketkur: kategori uygun değil (${cat.reason}) guild=${interaction.guild?.id}`);
       return interaction
         .reply({
-          embeds: [buildErrorEmbed('Ticket kategorisi doğrulanamadı. Yöneticinize bildirin.')],
+          embeds: [
+            buildErrorEmbed(
+              `${KATEGORI_HATASI[cat.reason] || 'Ticket kategorisi doğrulanamadı.'}\n` +
+                `Kategori kimliği: \`${config.ticket.categoryId || 'tanımlı değil'}\``,
+            ),
+          ],
           flags: MessageFlags.Ephemeral,
         })
         .catch(() => {});

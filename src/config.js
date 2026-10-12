@@ -62,6 +62,15 @@ function idList(name) {
 // Sabit staff ticket rolü — tüm ticket kanallarında FULL erişim (View/Read/Send/ManageMessages)
 const STAFF_TICKET_ROLE_ID = '1522773972393922730';
 
+// Sabit ticket kategorisi (GuildCategory) — TÜM ticket kanalları buraya açılır.
+// Aynı kalıp: STAFF_TICKET_ROLE_ID gibi sunucuya özel kritik kimlik config'de sabittir.
+// .env'deki TICKET_CATEGORY_ID tanımlıysa O ÜSTÜN GELİR (başka sunucuya taşımak için).
+// Böylece .env eksik/okunamıyor olsa bile ticket sistemi yanlış yere açılmaz.
+const TICKET_CATEGORY_ID = '1522774034323079329';
+
+// Sabit yetkili rolü — ticket açılırken etiketlenir (@mention).
+const TICKET_PING_ROLE_ID = '1522773972393922730';
+
 // Guard komutlarını kullanabilen rol — TEK ROLE kilitlidir.
 // .env'deki GUARD_MANAGER_ROLE_IDS BİLEREK GÖZ ARDI EDİLİR (eski roller geçersizdir).
 // Rol koruması (guard/events.js → isSensitiveTarget) aynı listeyi kullanır.
@@ -168,11 +177,12 @@ const config = {
   // --- YENİ TICKET SİSTEMİ ---
   ticket: {
     // Tüm ticket kanalları buraya açılır (GuildCategory olmalı).
-    categoryId: (process.env.TICKET_CATEGORY_ID || '').trim() || null,
+      // .env yoksa sabit TICKET_CATEGORY_ID kullanilir — kategori ASLA bos kalmaz.
+      categoryId: (process.env.TICKET_CATEGORY_ID || '').trim() || TICKET_CATEGORY_ID,
     // Panelde tek yol: /ticketkur. Bot açılışında panel gönderilmez.
     panelChannelId: (process.env.TICKET_PANEL_CHANNEL_ID || '').trim() || null,
     // Ticket açıldığında etiketlenecek rol (her tür için aynı).
-    pingRoleId: (process.env.TICKET_PING_ROLE_ID || '').trim() || null,
+      pingRoleId: (process.env.TICKET_PING_ROLE_ID || '').trim() || TICKET_PING_ROLE_ID,
     // Ticket kanalına tam erişim alacak yetkili roller.
     staffRoleIds: (() => {
       const base = idList('TICKET_STAFF_ROLE_IDS');

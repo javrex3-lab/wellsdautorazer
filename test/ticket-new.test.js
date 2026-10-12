@@ -8,6 +8,8 @@ process.env.DB_PATH = require('path').join(require('os').tmpdir(), 'tknew-' + Da
 const fs = require('fs');
 const path = require('path');
 const db = require('../src/database/database');
+const config = require('../src/config');
+const kok0 = path.resolve(__dirname, '..');
 
 const G = '1354465879311777893';
 const U1 = '100000000000000001';
@@ -197,7 +199,7 @@ const guildYap = (cat) => ({
   members: {
     me: { permissions: { has: () => true }, roles: { highest: { position: 90 } } },
   },
-  channels: { fetch: async (id) => (id === CATEGORY && cat ? cat : Promise.reject(new Error('yok'))) },
+    channels: { fetch: async (id) => (id === CATEGORY && cat ? cat : Promise.reject(Object.assign(new Error('Unknown Channel'), { code: 10003, status: 404 }))) },
 });
 
 (async () => {
@@ -212,6 +214,65 @@ const guildYap = (cat) => ({
 
   const yetkisiz = await tickets.resolveTicketCategory(guildYap(dogruKategori(false)));
   check('Bot yetkisi yoksa reddediliyor', yetkisiz.ok === false && yetkisiz.reason === 'yetki_yok', yetkisiz.reason);
+
+  /* ---- Yeni ayrım testleri: her hata AYRI sebep döner ---- */
+  const geriAl = { env: process.env.TICKET_CATEGORY_ID, cfg: config.ticket.categoryId };
+  const idAyarla = (v) => {
+    process.env.TICKET_CATEGORY_ID = v;
+    config.ticket.categoryId = v;
+  };
+
+  idAyarla('abc');
+  const gecersiz = await tickets.resolveTicketCategory(guildYap(dogruKategori(true)));
+  check('Geçersiz ID biçimi -> gecersiz_id', gecersiz.ok === false && gecersiz.reason === 'gecersiz_id', gecersiz.reason);
+
+  idAyarla('');
+  const bos = await tickets.resolveTicketCategory(guildYap(dogruKategori(true)));
+  check('Boş ID -> yapilandirilma', bos.ok === false && bos.reason === 'yapilandirilma', bos.reason);
+
+  idAyarla('999999999999999999');
+  const yok2 = await tickets.resolveTicketCategory(guildYap(dogruKategori(true)));
+  check('Bulunamayan kategori -> kategori_yok', yok2.ok === false && yok2.reason === 'kategori_yok', yok2.reason);
+
+  // Farklı sunucuya ait kanal
+  process.env.TICKET_CATEGORY_ID = geriAl.env;
+  config.ticket.categoryId = geriAl.cfg;
+  const yabanciKategori = { id: CATEGORY, type: ChannelType.GuildCategory, guildId: '111111111111111111', permissionsFor: () => ({ has: () => true }) };
+  const yanlisSunucu = await tickets.resolveTicketCategory(guildYap(yabanciKategori));
+  check('Farklı sunucuya ait kategori -> yanlis_sunucu', yanlisSunucu.ok === false && yanlisSunucu.reason === 'yanlis_sunucu', yanlisSunucu.reason);
+
+  // Discord API hatası (404 olmayan)
+  const apiGuild = {
+    roles: { everyone: { id: G }, cache: new Map() },
+    members: { me: { permissions: { has: () => true }, roles: { highest: { position: 90 } } } },
+    channels: { fetch: async () => { throw Object.assign(new Error('rate limited'), { code: 50035 }); } },
+  };
+  const apiHatasi = await tickets.resolveTicketCategory(apiGuild);
+  check('Discord API hatası -> api_hatasi', apiHatasi.ok === false && apiHatasi.reason === 'api_hatasi', apiHatasi.reason);
+  check('API hatası kodu döndürülüyor', apiHatasi.detail === '50035', String(apiHatasi.detail));
+
+  // 404 ayrımı
+  const y404 = {
+    roles: { everyone: { id: G }, cache: new Map() },
+    members: { me: { permissions: { has: () => true } } },
+    channels: { fetch: async () => { throw Object.assign(new Error('Unknown Channel'), { code: 10003 }); } },
+  };
+  const sonuc404 = await tickets.resolveTicketCategory(y404);
+  check('Discord 404 -> kategori_yok (api_hatasi değil)', sonuc404.ok === false && sonuc404.reason === 'kategori_yok', sonuc404.reason);
+
+  // Sabit fallback: env boşken config sabitini kullanmalı
+  check('TICKET_CATEGORY_ID sabiti tanımlı', /const TICKET_CATEGORY_ID = '\d{17,20}'/.test(fs.readFileSync(path.join(kok0, 'src/config.js'), 'utf8')));
+  const kaynakCfg = fs.readFileSync(path.join(kok0, 'src/config.js'), 'utf8');
+  check(
+    'categoryId env yoksa sabite düşüyor',
+    /categoryId:\s*\(process\.env\.TICKET_CATEGORY_ID \|\| ''\)\.trim\(\) \|\| TICKET_CATEGORY_ID/.test(kaynakCfg),
+  );
+  check('Kategori ID tek yerde tanımlı (sabit)', (kaynakCfg.match(/const TICKET_CATEGORY_ID = '(\d+)'/g) || []).length === 1);
+
+  // Her sebep için kullanıcı mesajı var mı?
+  for (const r of ['yapilandirilma', 'gecersiz_id', 'kategori_yok', 'kategori_degil', 'yanlis_sunucu', 'yetki_yok', 'api_hatasi']) {
+    check('Kullanıcı mesajı var: ' + r, typeof tickets.KATEGORI_HATASI[r] === 'string' && tickets.KATEGORI_HATASI[r].length > 10);
+  }
 
   /* ============================================================== */
   section('6) HANDLER YETKİ KONTROLLERİ');
@@ -360,7 +421,6 @@ const guildYap = (cat) => ({
     check('DB artık export etmiyor: ' + f, typeof db[f] !== 'function');
   }
 
-  const config = require('../src/config');
   check('TICKET_CATEGORY_ID = ' + CATEGORY, config.ticket.categoryId === CATEGORY, String(config.ticket.categoryId));
   check('TICKET_PING_ROLE_ID = ' + PING_ROLE, config.ticket.pingRoleId === PING_ROLE, String(config.ticket.pingRoleId));
   check(
@@ -456,7 +516,7 @@ const guildYap = (cat) => ({
   check('Diğer: ticket türü DBde doğru', db.getTicketByChannel(ch3.id)?.kind === 'diger');
 
   // --- Kategori yoksa kanal açılmıyor ---
-  const kotuGuild = { ...guild, channels: { fetch: async () => Promise.reject(new Error('yok')), create: guild.channels.create } };
+  const kotuGuild = { ...guild, channels: { fetch: async () => Promise.reject(Object.assign(new Error('Unknown Channel'), { code: 10003, status: 404 })), create: guild.channels.create } };
   const ac5 = sahteEtkilesim({ customId: 'tk_ac_basvuru', channelId: null, userId: '100000000000000004', staff: false, guild: kotuGuild });
   await tickets.handleOpenButton(ac5, 'basvuru');
   check('Kategori yoksa kanal açılmıyor', olusan.length === 3, 'toplam kanal: ' + olusan.length);
@@ -519,7 +579,7 @@ const guildYap = (cat) => ({
   const kul2 = { id: U1, user: { id: U1, tag: 'x#1' }, roles: { cache: new Map(), add: async () => {} } };
   const kotuRolGuild = {
     ...rolGuild,
-    channels: { fetch: async () => Promise.reject(new Error('yok')), create: async () => ({ id: 'x', send: async (m) => { kotuMesajlar.push(m); }, deleted: false }) },
+    channels: { fetch: async () => Promise.reject(Object.assign(new Error('Unknown Channel'), { code: 10003, status: 404 })), create: async () => ({ id: 'x', send: async (m) => { kotuMesajlar.push(m); }, deleted: false }) },
     members: { fetch: async () => kul2, me: { permissions: { has: () => false }, roles: { highest: { position: 90 } } } },
   };
   const kotuMesajlar = [];

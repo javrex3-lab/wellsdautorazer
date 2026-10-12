@@ -102,29 +102,71 @@ function panelImage() {
  * @returns {Promise<{ok:boolean, parent?:Object|null, reason?:string}>}
  */
 async function resolveTicketCategory(guild) {
-  const id = config.ticket.categoryId;
-  if (!id) return { ok: false, reason: 'yapilandirilma' };
+  const HAM_ID = process.env.TICKET_CATEGORY_ID || config.ticket.categoryId || null;
+  const id = HAM_ID ? String(HAM_ID).trim() : null;
 
+  // 1) Yapılandırılmamış
+  if (!id) {
+    logger.error('[ticket] Kategori ID yapılandırılmamış (config.ticket.categoryId boş).');
+    return { ok: false, reason: 'yapilandirilma' };
+  }
+
+  // 2) Geçersiz biçim (snowflake değil) — sessizce başka yere açmayız.
+  if (!/^\d{17,20}$/.test(id)) {
+    logger.error(`[ticket] Kategori ID geçersiz biçimde: '${id}' (beklenen 17-20 haneli snowflake).`);
+    return { ok: false, reason: 'gecersiz_id' };
+  }
+
+  // 3) Kanal sunucudan çekilir (cache tek başına yeterli değildir).
   let parent = null;
   try {
     parent = await guild.channels.fetch(id);
-  } catch {
+  } catch (err) {
+    const kod = err?.code || err?.status || 'bilinmiyor';
+    logger.error(`[ticket] Kategori getirilemedi (guild ${guild?.id}, id ${id}): kod=${kod} ${err?.message}`);
+    if (err?.code === 10003 || kod === 404 || kod === '404') {
+      return { ok: false, reason: 'kategori_yok' };
+    }
+    return { ok: false, reason: 'api_hatasi', detail: String(kod) };
+  }
+
+  if (!parent) {
+    logger.error(`[ticket] Kategori getirildi ama boş (guild ${guild?.id}, id ${id}).`);
     return { ok: false, reason: 'kategori_yok' };
   }
-  if (!parent || parent.type !== ChannelType.GuildCategory) return { ok: false, reason: 'kategori_degil' };
 
-  const me = guild.members?.me;
-  if (me && !parent.permissionsFor(me)?.has(PermissionFlagsBits.ManageChannels)) {
+  // 4) Doğru sunucuya ait mi? (çapraz sunucu ID kullanımı sessizce geçmemeli)
+  if (parent.guildId && String(parent.guildId) !== String(guild?.id)) {
+    logger.error(`[ticket] Kategori farklı sunucuya ait: bulunan=${parent.guildId}, beklenen=${guild?.id}`);
+    return { ok: false, reason: 'yanlis_sunucu' };
+  }
+
+  // 5) Gerçekten kategori kanalı mı?
+  if (parent.type !== ChannelType.GuildCategory) {
+    logger.error(`[ticket] Kanal bir kategori değil: id=${id}, type=${parent.type} (beklenen GuildCategory=${ChannelType.GuildCategory}).`);
+    return { ok: false, reason: 'kategori_degil' };
+  }
+
+  // 6) Bot kanal açabilir mi?
+  const me = guild?.members?.me;
+  const perms = me ? parent.permissionsFor?.(me) : null;
+  if (!perms?.has(PermissionFlagsBits.ManageChannels)) {
+    logger.error(`[ticket] Bot kategoride Kanalları Yönet yetkisine sahip değil (guild ${guild?.id}, kategori ${id}).`);
     return { ok: false, reason: 'yetki_yok' };
   }
+
   return { ok: true, parent };
 }
 
+/** Sebep → kullanıcıya gösterilecek açıklama (teknik detay loga gider, buraya değil). */
 const KATEGORI_HATASI = {
-  yapilandirilma: 'Ticket sistemi yapılandırılmamış. Lütfen yöneticinize bildirin.',
-  kategori_yok: 'Ticket kategorisi bulunamadı. Lütfen yöneticinize bildirin.',
-  kategori_degil: 'Ayarlanan ticket kategorisi geçerli değil. Lütfen yöneticinize bildirin.',
-  yetki_yok: 'Bot ticket kategorisinde kanal açma yetkisine sahip değil. Lütfen yöneticinize bildirin.',
+  yapilandirilma: 'Ticket kategorisi yapılandırılmamış. Yöneticinize bildirin.',
+  gecersiz_id: 'Ticket kategorisi kimliği geçersiz. Yöneticinize bildirin.',
+  kategori_yok: 'Ticket kategorisi bulunamadı. Yöneticinize bildirin.',
+  kategori_degil: 'Ayarlanan kanal bir kategori değil. Yöneticinize bildirin.',
+  yanlis_sunucu: 'Ticket kategorisi farklı bir sunucuya ait. Yöneticinize bildirin.',
+  yetki_yok: 'Bot ticket kategorisinde kanal açma yetkisine sahip değil. Yöneticinize bildirin.',
+  api_hatasi: 'Discord API hatası oluştu. Lütfen tekrar deneyin.',
 };
 
 /* ================================================================== */
@@ -558,6 +600,7 @@ async function safeReplyGone(interaction) {
 /* ================================================================== */
 
 module.exports = {
+  KATEGORI_HATASI,
   CID,
   OPEN_KIND,
   isKnownKind,
