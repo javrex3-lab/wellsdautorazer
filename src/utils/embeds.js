@@ -135,14 +135,22 @@ function buildIcPanelEmbed({
   }
 
   const isDecided = status === 'approved' || status === 'rejected';
-  const full = lines.slice();
-  if (isDecided) {
-    full.push('');
-    full.push('────────────────');
-    full.push(statusLine);
-  }
 
-  const embed = baseEmbed(isDecided && status === 'rejected' ? config.colors.error : config.colors.clear)
+  // KARAR SONUCU panelin EN ÜSTÜNDE, vurgulu gösterilir.
+  const full = [];
+  if (isDecided) {
+    full.push('## ' + statusLine);
+    full.push('');
+  }
+  for (const l of lines) full.push(l);
+
+  const embed = baseEmbed(
+    status === 'approved'
+      ? config.colors.success
+      : status === 'rejected'
+        ? config.colors.error
+        : config.colors.clear
+  )
     .setTitle('IC İSİM TALEBİ')
     .setDescription(full.join('\n'));
 
@@ -156,7 +164,7 @@ function buildIcPanelEmbed({
   }
 
   if (isDecided) {
-    embed.setFooter({ text: statusLine.replace('<@' + (decidedBy || '') + '>', 'Yetkili') });
+    embed.setFooter({ text: 'Bu talep sonuçlandı ve artık kullanılamaz.' });
   }
   return embed;
 }

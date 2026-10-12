@@ -112,23 +112,6 @@ async function safeUpdate(interaction, payload) {
   }
 }
 
-/**
- * Panel bu bot tarafindan olusturulmus mu?
- * (embed icinde eski botun adi/imzasi aranir — kesin degil ama iyi bir isaret)
- * @returns {Promise<boolean>} true = baska bir botun paneli
- */
-async function isForeignPanel(interaction) {
-  try {
-    const embeds = interaction.message?.embeds || [];
-    const hayalet = embeds.some((e) =>
-      /WELLSDAUTORAZER|Javrex Bot System|Eski/i.test(String(e.footer?.text || "") + String(e.title || "")),
-    );
-    return hayalet;
-  } catch {
-    return false;
-  }
-}
-
 async function handleIcButton(interaction) {
   let step = 'baslangic';
   try {
@@ -143,34 +126,35 @@ async function handleIcButton(interaction) {
     const panelId = interaction.message?.id;
     const rec = getIcByPanel(panelId);
     if (!rec) {
-      // KAYIT YOK. En olası nedenler (kullanıcıya sıralı ve net anlatılır):
-      //   1) Panel eski bot tarafından oluşturulmuş (eski botun DB'sinde kayıtlı)
-      //   2) Bot yeniden başlatıldı, veritabanı sıfırlandı (geçici disk)
-      //   3) Panel gerçekten silinmiş
       step = 'kayit bulunamadi';
-      logger.warn(`IC paneli #${panelId} için kayıt yok (muhtemelen eski bot paneli veya DB sıfırlanmış).`);
-      const eskiMi = await isForeignPanel(interaction);
+      // Bu panel kullanilamaz (eski bot paneli / DB sifirlanmis / mesaj silinmis).
+      // Kirmizi "Hata" kutusu GOSTERILMEZ — butonlar sessizce kapatilir.
+      logger.warn(`IC paneli #${panelId} için kayıt yok — panel kapatıldı.`);
+      try {
+        await interaction.update({ components: [buildIcButtons(true)] });
+      } catch {
+        /* mesaj silinmiş olabilir */
+      }
       await interaction
-        .reply({
-          embeds: [
-            buildErrorEmbed(
-              eskiMi
-                ? '⏳ **Bu panel eski bot tarafından oluşturulmuş.**\n\n' +
-                  'Eski bot artık sunucuda değil, talep kaydı da bu botta bulunmuyor.\n' +
-                  '**Yeni bir talep için:** bu kanala IC ismini yazman yeterli — yeni panel otomatik açılır.'
-                : '⏳ **Bu panelin kaydı bulunamadı.**\n\n' +
-                  'Panel geçersiz: ya bot yeniden başlatıldı ve kayıt silindi, ya da panel başka bir oturumdan kalmış.\n' +
-                  '**Yeni bir talep için:** bu kanala IC ismini yazman yeterli — yeni panel otomatik açılır.',
-            ),
-          ],
-          flags: MessageFlags.Ephemeral,
-        })
+        .reply({ content: '⏳ Bu panel artık kullanılamaz.', flags: MessageFlags.Ephemeral })
         .catch(() => {});
       return true;
     }
     if (rec.status !== 'pending') {
+      step = 'zaten karara baglanmis';
+      const ne = rec.status === 'approved' ? '✅ Onaylandı' : '❌ Reddedildi';
+      const kim = rec.decided_by ? ' — <@' + rec.decided_by + '>' : '';
+      // Panel zaten karar gorunumunde; butonlari da kapali olsun.
+      try {
+        await interaction.update({ components: [buildIcButtons(true)] });
+      } catch {
+        /* guncelleme gerekmezse yoksay */
+      }
       await interaction
-        .reply({ content: 'ℹ️ Bu talep zaten karara bağlanmış.', flags: MessageFlags.Ephemeral })
+        .reply({
+          content: ne + kim + '\n\n⏳ Bu talep artık kullanılamaz.',
+          flags: MessageFlags.Ephemeral,
+        })
         .catch(() => {});
       return true;
     }
