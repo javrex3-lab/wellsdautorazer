@@ -57,6 +57,15 @@ module.exports = {
       logger.error('Ticket permission senkronunda hata.', err);
     }
 
+    // ---- Mazeret paneli: yetkili listesi canlı takip + süre sonu temizliği ----
+    try {
+      const { startMazeretTicker, adminChannelId } = require('../handlers/mazeretHandler');
+      if (adminChannelId()) startMazeretTicker(client);
+      else logger.warn('Mazeret yetkili paneli kapalı: MAZERET_ADMIN_CHANNEL_ID boş.');
+    } catch (err) {
+      logger.error('Mazeret takibi başlatılamadı.', err);
+    }
+
     // ---- FiveM canlı paneli (Yöntem A/B/C durumunu tek mesajda gösterir) ----
     // Kanal tanımlı değilse no-op çalışır; botu etkilemez.
     try {

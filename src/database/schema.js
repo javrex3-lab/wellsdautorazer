@@ -133,6 +133,40 @@ CREATE TABLE IF NOT EXISTS ic_approvals (
 CREATE INDEX IF NOT EXISTS idx_ic_user ON ic_approvals (guild_id, user_id, status);
 CREATE INDEX IF NOT EXISTS idx_ic_panel ON ic_approvals (panel_message_id);
 
+-- ===================== MAZERET SISTEMI =====================
+-- Her bildirim bir kayit olur; sure dolunca otomatik "aktif" listesinden cikar.
+-- duration_ms = kullaniciya yazdirilan metinden hesaplanan gercek sure.
+CREATE TABLE IF NOT EXISTS mazeret_records (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id       TEXT NOT NULL,
+  user_id        TEXT NOT NULL,
+  reason         TEXT NOT NULL,
+  duration_raw   TEXT NOT NULL,
+  duration_ms    INTEGER NOT NULL,
+  duration_guess INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  expires_at     INTEGER NOT NULL,
+  reported_by    TEXT NOT NULL,
+  active         INTEGER NOT NULL DEFAULT 1,
+  ended_at       INTEGER,
+  ended_by       TEXT,
+  end_reason     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mazeret_active ON mazeret_records (guild_id, active, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mazeret_user ON mazeret_records (guild_id, user_id, active);
+
+-- Yetkili paneli (aktif mazeretli listesi) TEK bir mesajda tutulur.
+-- kind: 'admin' = yetkili listesi, 'public' = herkesin bildirim paneli.
+CREATE TABLE IF NOT EXISTS mazeret_active_panels (
+  guild_id   TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, kind)
+);
+
 CREATE TABLE IF NOT EXISTS guard_whitelist (
   guild_id   TEXT NOT NULL,
   user_id    TEXT NOT NULL,

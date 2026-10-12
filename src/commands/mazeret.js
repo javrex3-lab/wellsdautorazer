@@ -1,40 +1,44 @@
 /**
- * /mazeret - Mazeret bildirim panelini komutun kullanıldığı kanala gönderir (sadece yetkililer).
+ * /mazeret - ESKİ komut. Artık herkesin kullanabileceği /mazeretpanel var.
+ * Geriye uyumluluk için aynı işi yapar, kullanıcıyı yeni komuta yönlendirir.
  */
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { buildErrorEmbed, buildMazeretPanelEmbed, buildMazeretOpenRow } = require('../utils/embeds');
-const { upsertMazeretPanel } = require('../database/database');
-const { canManageTickets } = require('../utils/permissions');
+const { MessageFlags } = require('discord.js');
+const { buildErrorEmbed } = require('../utils/embeds');
 const logger = require('../utils/logger');
 
 module.exports = {
-  data: new SlashCommandBuilder().setName('mazeret').setDescription('Mazeret bildirim paneli gönderir (sadece yetkililer).'),
+  data: {
+    name: 'mazeret',
+    description: '[ESKİ] Mazeret paneli — artık /mazeretpanel kullanın.',
+    options: [],
+    toJSON() {
+      return {
+        name: this.name,
+        description: this.description,
+        options: this.options,
+      };
+    },
+  },
+  openToEveryone: true,
+  deprecated: true,
 
   async execute(interaction) {
     if (!interaction.guild) {
-      return interaction.reply({ embeds: [buildErrorEmbed('Bu komut yalnızca sunucuda kullanılabilir.')], flags: MessageFlags.Ephemeral });
+      return interaction
+        .reply({ embeds: [buildErrorEmbed('Bu komut yalnızca sunucuda kullanılabilir.')], flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
-    if (!canManageTickets(interaction.member)) {
-      return interaction.reply({ embeds: [buildErrorEmbed('Bu komutu yalnızca yetkililer kullanabilir.')], flags: MessageFlags.Ephemeral });
-    }
-
     try {
-      const panelMsg = await interaction.channel.send({
-        embeds: [buildMazeretPanelEmbed()],
-        components: [buildMazeretOpenRow()],
-      });
-      try {
-        upsertMazeretPanel(interaction.guildId, interaction.channelId, panelMsg.id);
-      } catch {
-        /* panel takibi kritik değil */
-      }
-      logger.success(`Mazeret paneli gönderildi (#${interaction.channel?.name || interaction.channelId})`);
-      return interaction.reply({ content: '✅ Mazeret paneli bu kanala gönderildi.', flags: MessageFlags.Ephemeral });
+      const yeni = interaction.client.commands?.get('mazeretpanel');
+      if (yeni) return await yeni.execute(interaction);
+      return interaction
+        .reply({
+          content: 'Lütfen `/mazeretpanel` komutunu kullanın.',
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
     } catch (err) {
       logger.error('Interaction failed: /mazeret.', err);
-      const payload = { embeds: [buildErrorEmbed('Panel gönderilirken bir hata oluştu.')], flags: MessageFlags.Ephemeral };
-      if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => {});
-      else await interaction.reply(payload).catch(() => {});
     }
   },
 };

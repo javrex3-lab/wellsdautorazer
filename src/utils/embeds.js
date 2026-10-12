@@ -91,6 +91,13 @@ function buildErrorEmbed(description) {
   return baseEmbed(config.colors.error).setTitle('⚠️ Hata').setDescription(description);
 }
 
+/** Basarili islem yaniti (yesil). */
+function buildSuccessEmbed(text) {
+  return baseEmbed(config.colors.success)
+    .setDescription(String(text || 'İşlem tamamlandı.'))
+    .setTimestamp();
+}
+
 /**
  * IC isim onay paneli — ekran goruntusundeki tasarim.
  * status: 'pending' | 'approved' | 'rejected'
@@ -376,6 +383,7 @@ module.exports = {
   buildDmResultEmbed,
   buildClearEmbed,
   buildErrorEmbed,
+  buildSuccessEmbed,
   buildIcPanelEmbed,
   buildIcButtons,
   buildMazeretPanelEmbed,

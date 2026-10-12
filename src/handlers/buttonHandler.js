@@ -25,7 +25,7 @@ const ingameCmd = require('../commands/ingame');
 const aktiflikCmd = require('../commands/aktiflik');
 const ticketHandler = require('./ticketHandler');
 const { handleIcButton } = require('./icHandler');
-const { handleMazeretOpen } = require('./mazeretHandler');
+const { handleMazeretOpen, handleMazeretRefresh, REFRESH_BTN } = require('./mazeretHandler');
 const { handleQuitButton } = require('./quitHandler');
 const logger = require('../utils/logger');
 
@@ -57,6 +57,10 @@ async function handleButton(interaction) {
   }
   if (customId === 'mazeret_open') {
     return handleMazeretOpen(interaction);
+  }
+
+  if (customId === REFRESH_BTN) {
+    return handleMazeretRefresh(interaction);
   }
   if (customId === 'quit_roles') {
     return handleQuitButton(interaction);

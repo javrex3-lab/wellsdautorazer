@@ -236,7 +236,12 @@ const config = {
   // --- Mazeret sistemi ---
   mazeretCooldownMs: int('MAZERET_COOLDOWN_MS', 300000), // kullanıcı başına bildirim bekleme süresi (5 dk)
   // Mazeret bildirimlerinin düştüğü kanal (boşsa panelin kanalı kullanılır).
+  // Mazeret bildirimlerinin düştüğü kanal (geriye uyumluluk: MAZERET_ADMIN_CHANNEL_ID boşsa burası kullanılır).
   mazeretChannelId: (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
+  // YETKİLİ listesi panelinin kanalı — sadece yetkililer görecek.
+  mazeretAdminChannelId: (process.env.MAZERET_ADMIN_CHANNEL_ID || '').trim() || (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
+  // Canlı panel yenileme aralığı (ms). Varsayılan 60sn.
+  mazeretRefreshMs: int('MAZERET_REFRESH_MS', 60000),
   // Mazeret panel banner görseli (/mazeretpng ile değişir; DB'deki değer önceliklidir).
   mazeretPanelImage: (process.env.MAZERET_PANEL_IMAGE || '').trim() || null,
 
