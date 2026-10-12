@@ -343,69 +343,80 @@ async function generateTranscript(ticket, channel, guild, closedBy) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
-  const tx = db.transaction(() => {
-    for (const pm of processedMessages) {
-      insertMsg.run(
-        transcriptId,
-        pm.messageId,
-        pm.userId,
-        pm.username,
-        pm.displayName,
-        pm.discriminator,
-        pm.avatarUrl,
-        pm.bot,
-        pm.content,
-        pm.cleanedContent,
-        pm.editedAt,
-        pm.createdAt,
-        pm.type,
-        pm.replyToId,
-        pm.replyPreview,
-        pm.attachments,
-        pm.embeds,
-        pm.reactions,
-        pm.stickerItems,
-        pm.roleColor,
-        pm.roleName,
-      );
-
-      for (const att of pm._attachments) {
-        insertAttach.run(
+  // NOT: node:sqlite (DatabaseSync) `db.transaction()` SUNMAZ — o better-sqlite3
+  // API'sidir. Önceki sürümde txn() burada çağrılıyordu ve web transcript sessizce
+  // HİÇ KAYDEDİLMEYORDU ("db.transaction is not a function"). BEGIN/COMMIT/ROLLBACK
+  // ile aynı atomiklik sağlanır.
+  const tx = () => {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const pm of processedMessages) {
+        insertMsg.run(
           transcriptId,
           pm.messageId,
-          att.attachmentId,
-          att.filename,
-          att.contentType,
-          att.size,
-          att.url,
-          att.proxyUrl,
-          att.width,
-          att.height,
-          att.durationSecs,
-          att._shouldArchive ? 1 : 0,
-          null,
-          null,
+          pm.userId,
+          pm.username,
+          pm.displayName,
+          pm.discriminator,
+          pm.avatarUrl,
+          pm.bot,
+          pm.content,
+          pm.cleanedContent,
+          pm.editedAt,
+          pm.createdAt,
+          pm.type,
+          pm.replyToId,
+          pm.replyPreview,
+          pm.attachments,
+          pm.embeds,
+          pm.reactions,
+          pm.stickerItems,
+          pm.roleColor,
+          pm.roleName,
+        );
+
+        for (const att of pm._attachments) {
+          insertAttach.run(
+            transcriptId,
+            pm.messageId,
+            att.attachmentId,
+            att.filename,
+            att.contentType,
+            att.size,
+            att.url,
+            att.proxyUrl,
+            att.width,
+            att.height,
+            att.durationSecs,
+            att._shouldArchive ? 1 : 0,
+            null,
+            null,
+          );
+        }
+      }
+
+      for (const [userId, snap] of userSnapshots.entries()) {
+        const stats = userStats.get(userId);
+        insertUser.run(
+          transcriptId,
+          userId,
+          snap.username,
+          snap.displayName,
+          snap.discriminator,
+          snap.avatarUrl,
+          snap.bot ? 1 : 0,
+          JSON.stringify(snap.roles),
+          stats?.count || 0,
+          stats?.first || null,
+          stats?.last || null,
         );
       }
+    } catch (txErr) {
+      try { db.exec('ROLLBACK'); } catch { /* zaten kapalı */ }
+      throw txErr;
     }
-
-    for (const [userId, snap] of userSnapshots.entries()) {
-      const stats = userStats.get(userId);
-      insertUser.run(
-        transcriptId,
-        userId,
-        snap.username,
-        snap.displayName,
-        snap.discriminator,
-        snap.avatarUrl,
-        snap.bot ? 1 : 0,
-        JSON.stringify(snap.roles),
-        stats?.count || 0,
-        stats?.first || null,
-        stats?.last || null,
-      );
-    }
-  });
+    db.exec('COMMIT');
+  };
 
   tx();
   logger.success(`Ticket #${ticket.id} transcript kaydedildi: ${transcriptId} (${processedMessages.length} mesaj, ${userStats.size} kullanıcı)`);

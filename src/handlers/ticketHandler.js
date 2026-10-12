@@ -215,14 +215,32 @@ async function createTicketFromSelect(interaction, categoryKey) {
         }
       } catch {}
     }
+    // --- TICKET KATEGORİSİ (zorunlu) ---
+    // Spec: bütün ticket'lar (başvuru / şikayet / diğer) TICKET_CATEGORY_ID
+    // altında açılmalı. Kategori yoksa/silinmişse/yetki eksikse ticket YANLIŞ
+    // yere açılmaz — kullanıcıya hata verilir. Sessizce açmak, sonradan
+    // bulunamayan kanalların sebebidir.
+    if (!config.ticket.categoryId) {
+      logger.error('TICKET_CATEGORY_ID tanımlı değil — ticket açılmadı (yanlış yere açılmasın diye durduruldu).');
+      return interaction.editReply({
+        embeds: [buildErrorEmbed('Ticket sistemi yapılandırılmamış. Lütfen yöneticinize bildirin.')],
+      });
+    }
+
     const parent = await resolveCategory(guild);
-    // Kategori çözülemediyse ticket YANLIŞ yerde açılır. Kullanıcı bunu bilmeli,
-    // yoksa "ticket nereye gitti?" diye kovalar ve kimse fark etmez.
-    let placeholderNotu = null;
-    if (config.ticket.categoryId && !parent) {
-      logger.warn(`TICKET_CATEGORY_ID geçersiz: ${config.ticket.categoryId} (ticket kategorisiz açılacak)`);
-      placeholderNotu =
-        '\n\n⚠️ **Uyarı:** ayarlı ticket kategorisi bulunamadı, bu kanal geçici olarak kategori dışında açıldı.';
+    if (!parent) {
+      logger.error(`TICKET_CATEGORY_ID bulunamadı veya kategori değil: ${config.ticket.categoryId}`);
+      return interaction.editReply({
+        embeds: [buildErrorEmbed('Ticket kategorisi bulunamadı. Lütfen yöneticinize bildirin.')],
+      });
+    }
+
+    // Kategorinin kendisinde kanal açabilme yetkisi var mı? (Admin değil, gerçek izin)
+    if (me && !parent.permissionsFor(me)?.has(PermissionFlagsBits.ManageChannels)) {
+      logger.error(`Bot "${parent.name}" (${parent.id}) kategorisinde Kanalları Yönet yetkisine sahip değil.`);
+      return interaction.editReply({
+        embeds: [buildErrorEmbed('Ticket kategorisinde kanal oluşturma yetkisi yok. Lütfen yöneticinize bildirin.')],
+      });
     }
 
     // ID'yi önceden rezerve et → düzgün kanal adı için gerekli
@@ -304,11 +322,26 @@ async function createTicketFromSelect(interaction, categoryKey) {
       channel = await guild.channels.create({
         name: sanitizeChannelName(interaction.user.username, ticketId),
         type: ChannelType.GuildText,
-        ...(parent ? { parent: parent.id } : {}),
+        parent: parent.id,
         topic: `Ticket #${ticketId} • ${category.label} • Sahip: ${interaction.user.tag}`.slice(0, 1024),
         permissionOverwrites: overwrites,
       });
       markTicketGuard(guild.id, channel.id);
+
+      // Kanal gerçekten kategoriye düştü mü? Discord parent'ı sessizce yok
+      // sayabilir (kategori limiti/izin kısıtı). Doğrulamazsak ticket yanlış
+      // yerde açılır ve kanal bir daha bulunamaz. Doğrula, yanlışsa SİL.
+      if (String(channel.parentId) !== String(parent.id)) {
+        const gercek = channel.parentId || 'yok';
+        await channel.delete('Ticket yanlış kategoride açıldı — temizlik').catch(() => {});
+        deleteTicket(ticketId);
+        logger.error(
+          `Ticket #${ticketId} yanlış kategoride açıldı (beklenen ${parent.id}, gelen ${gercek}) — kanal silindi, ticket açılmadı.`,
+        );
+        return interaction.editReply({
+          embeds: [buildErrorEmbed('Ticket kanalı doğru kategoride açılamadı. Lütfen yöneticinize bildirin.')],
+        });
+      }
     } catch (err) {
       deleteTicket(ticketId); // yetim satır bırakma
       logger.error(`Ticket kanalı oluşturulamadı (ticket #${ticketId}).`, err);
@@ -345,20 +378,45 @@ async function createTicketFromSelect(interaction, categoryKey) {
     const createdUnix = Math.floor(Date.now() / 1000);
     const pingRole = config.ticket.pingRoleId;
     let mentionableOpened = false;
+    // Rol etiketlenemezse ticket yine de açılır (ticket açmak rol etiketine
+    // bağımlı olmamalı) ama hem loglanır hem kullanıcıya söylenir.
+    let pingRolHatasi = null;
     if (pingRole) {
-      try {
-        const role = await guild.roles.fetch(pingRole).catch(() => null);
-        if (!role) {
-          logger.warn(`Ping rolü bulunamadı: ${pingRole} (etiket yine de denenecek)`);
-        } else if (!role.mentionable) {
+      const role = await guild.roles.fetch(pingRole).catch(() => null);
+      if (!role) {
+        pingRolHatasi = pingRole;
+        logger.error(`TICKET_PING_ROLE_ID bulunamadı: ${pingRole} — yetkililer etiketlenemedi (ticket #${ticketId}).`);
+        try {
+          const logChId = config.ticket.logChannelId;
+          if (logChId) {
+            const lc = await guild.channels.fetch(logChId).catch(() => null);
+            if (lc?.isTextBased()) {
+              await lc
+                .send(
+                  `⚠️ **PING ROLÜ BULUNAMADI**\nRol ID: \`${pingRole}\`\n` +
+                    `Ticket #${ticketId} açıldı ama yetkili ekibi etiketlenemedi.`,
+                )
+                .catch(() => {});
+            }
+          }
+        } catch {
+          /* log kanalı da yoksa sessiz geç */
+        }
+      } else if (!role.mentionable) {
+        // Rol mention'a kapalıysa geçici açılır, mesaj sonrası eski haline döndürülür
+        try {
           await role.setMentionable(true, 'Ticket açılış pingi');
           mentionableOpened = true;
+        } catch (err) {
+          pingRolHatasi = pingRole;
+          logger.error(`Ping rolü mention yapılamadı: ${err.code || err.message} (ticket #${ticketId})`);
         }
-      } catch (err) {
-        logger.warn(`Rol mention hazırlığı başarısız: ${err.code || err.message} (etiket yine de denenecek)`);
       }
+    } else {
+      logger.warn('TICKET_PING_ROLE_ID tanımlı değil — ticket açılışında rol etiketlemesi yapılmıyor.');
     }
     try {
+      // Etiket YALNIZCA bu ilk karşılama mesajında, TEK kez gider.
       const panelMsg = await channel.send({
         content: `<@${interaction.user.id}>${pingRole ? ` <@&${pingRole}>` : ''}`,
         allowedMentions: { users: [interaction.user.id], ...(pingRole ? { roles: [pingRole] } : {}) },
@@ -410,7 +468,11 @@ async function createTicketFromSelect(interaction, categoryKey) {
       actorId: interaction.user.id,
     });
 
-    return interaction.editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>${placeholderNotu || ''}` });
+    const pingUyarisi = pingRolHatasi
+      ? `\n\n⚠️ **Uyarı:** yetkili ekip rolü etiketlenemedi (\`${pingRolHatasi}\`). ` +
+        'Talebiniz kayıt altına alındı, yöneticinize bildirildi.'
+      : '';
+    return interaction.editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>${pingUyarisi}` });
   } catch (err) {
     logger.error('Interaction failed: ticket oluşturma.', err);
     return interaction.editReply({ embeds: [buildErrorEmbed('Ticket oluşturulurken bir hata oluştu.')] }).catch(() => {});
