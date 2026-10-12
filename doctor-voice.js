@@ -60,7 +60,7 @@ async function live() {
   const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
   const origSaved = getSetting(vh.voiceKey(gid));
   try {
-    await client.login(process.env.DISCORD_TOKEN);
+    await client.login(process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN);
     await new Promise((r) => client.once('clientReady', r));
     const guild = await client.guilds.fetch(gid);
     await guild.channels.fetch(cid).catch(() => null);

@@ -71,10 +71,10 @@ async function main() {
   // 1. .env + config (değer yazdırılmaz)
   const envPath = path.join(__dirname, '.env');
   line(fs.existsSync(envPath), '.env dosyası mevcut');
-  const token = (process.env.DISCORD_TOKEN || '').trim();
+  const token = (process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || '').trim();
   const clientId = (process.env.CLIENT_ID || '').trim();
   const guildId = (process.env.GUILD_ID || '').trim();
-  line(!!token, 'DISCORD_TOKEN yüklendi', token ? `(${token.length} karakter, değer gizli)` : '(eksik!)');
+  line(!!token, 'DISCORD_BOT_TOKEN yüklendi', token ? `(${token.length} karakter, değer gizli)` : '(eksik!)');
   line(!!clientId && SNOWFLAKE.test(clientId), 'CLIENT_ID formatı geçerli', clientId ? '(17-20 haneli snowflake)' : '(eksik!)');
   line(!!guildId && SNOWFLAKE.test(guildId), 'GUILD_ID formatı geçerli', guildId ? '(17-20 haneli snowflake)' : '(eksik!)');
 

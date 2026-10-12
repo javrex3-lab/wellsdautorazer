@@ -17,12 +17,12 @@ const { buildRestOptions, describeRestError } = require('./src/utils/restTranspo
 const SNOWFLAKE = /^\d{17,20}$/;
 
 function loadConfig() {
-  const token = (process.env.DISCORD_TOKEN || '').trim();
+  const token = (process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || '').trim();
   const clientId = (process.env.CLIENT_ID || '').trim();
   const guildId = (process.env.GUILD_ID || '').trim();
 
   const problems = [];
-  if (!token) problems.push('DISCORD_TOKEN eksik — .env dosyasına bot tokenını yazın.');
+  if (!token) problems.push('DISCORD_BOT_TOKEN (veya eski adi DISCORD_TOKEN) eksik — .env dosyasına bot tokenını yazın.');
   if (!clientId) problems.push('CLIENT_ID eksik — Developer Portal → General Information → Application ID.');
   else if (!SNOWFLAKE.test(clientId)) problems.push('CLIENT_ID formatı hatalı — 17-20 haneli sayı olmalı.');
   if (!guildId) problems.push('GUILD_ID eksik — sunucuya sağ tık → Sunucu ID’sini Kopyala (Geliştirici Modu açık olmalı).');
