@@ -103,6 +103,8 @@ function buildIcPanelEmbed({
   unreadable = false,
   status = 'pending',
   decidedBy = null,
+  decidedTag = null,
+  decidedAt = null,
   createdUnix = null,
 }) {
   const raw = String(requestedText || '');
@@ -123,15 +125,28 @@ function buildIcPanelEmbed({
   ];
 
   // --- Durum satırı (karar verildiyse) ---
+  // KARAR SONUCU
   let statusLine;
   if (status === 'approved') {
-    statusLine = '✅ Onaylandı' + (decidedBy ? ' — <@' + decidedBy + '>' : '');
+    statusLine = '✅ Onaylandı';
   } else if (status === 'rejected') {
-    statusLine = '❌ Reddedildi' + (decidedBy ? ' — <@' + decidedBy + '>' : '');
+    statusLine = '❌ Reddedildi';
   } else if (createdUnix) {
     statusLine = '🟡 Onay bekliyor · <t:' + createdUnix + ':R>';
   } else {
     statusLine = '🟡 Onay bekliyor';
+  }
+
+  // YETKİLİ satırı: mention etiketi + düz ad + karar zamanı
+  let yetkiliLine = null;
+  if (decidedBy) {
+    const parcalar = [];
+    parcalar.push('<@' + decidedBy + '>');                       // etiket (mention)
+    if (decidedTag) parcalar.push('**' + decidedTag + '**');     // düz ad (yedeği)
+    if (decidedAt) {
+      parcalar.push('<t:' + Math.floor(Number(decidedAt) / 1000) + ':f>');
+    }
+    yetkiliLine = parcalar.join(' · ');
   }
 
   const isDecided = status === 'approved' || status === 'rejected';
@@ -143,6 +158,10 @@ function buildIcPanelEmbed({
     full.push('');
   }
   for (const l of lines) full.push(l);
+  if (yetkiliLine) {
+    full.push('');
+    full.push('👮 **Yetkili:** ' + yetkiliLine);
+  }
 
   const embed = baseEmbed(
     status === 'approved'

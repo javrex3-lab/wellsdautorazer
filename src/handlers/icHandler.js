@@ -131,7 +131,10 @@ async function handleIcButton(interaction) {
       // Kirmizi "Hata" kutusu GOSTERILMEZ — butonlar sessizce kapatilir.
       logger.warn(`IC paneli #${panelId} için kayıt yok — panel kapatıldı.`);
       try {
-        await interaction.update({ components: [buildIcButtons(true)] });
+        // Kararı veren yetkilinin görünen adı (etiketle birlikte gösterilecek)
+    const deciderTag = interaction.user?.tag || null;
+
+    await interaction.update({ components: [buildIcButtons(true)] });
       } catch {
         /* mesaj silinmiş olabilir */
       }
@@ -208,6 +211,8 @@ async function handleIcButton(interaction) {
           requestedText: fresh.requested_text,
           status: fresh.status,
           decidedBy: fresh.decided_by,
+          decidedTag: deciderTag,
+          decidedAt: fresh.decided_at,
         }),
       ],
       components: [buildIcButtons(true)],
