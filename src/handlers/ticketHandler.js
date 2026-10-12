@@ -216,8 +216,13 @@ async function createTicketFromSelect(interaction, categoryKey) {
       } catch {}
     }
     const parent = await resolveCategory(guild);
+    // Kategori çözülemediyse ticket YANLIŞ yerde açılır. Kullanıcı bunu bilmeli,
+    // yoksa "ticket nereye gitti?" diye kovalar ve kimse fark etmez.
+    let placeholderNotu = null;
     if (config.ticket.categoryId && !parent) {
       logger.warn(`TICKET_CATEGORY_ID geçersiz: ${config.ticket.categoryId} (ticket kategorisiz açılacak)`);
+      placeholderNotu =
+        '\n\n⚠️ **Uyarı:** ayarlı ticket kategorisi bulunamadı, bu kanal geçici olarak kategori dışında açıldı.';
     }
 
     // ID'yi önceden rezerve et → düzgün kanal adı için gerekli
@@ -405,7 +410,7 @@ async function createTicketFromSelect(interaction, categoryKey) {
       actorId: interaction.user.id,
     });
 
-    return interaction.editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>` });
+    return interaction.editReply({ content: `✅ Ticket oluşturuldu: <#${channel.id}>${placeholderNotu || ''}` });
   } catch (err) {
     logger.error('Interaction failed: ticket oluşturma.', err);
     return interaction.editReply({ embeds: [buildErrorEmbed('Ticket oluşturulurken bir hata oluştu.')] }).catch(() => {});

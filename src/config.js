@@ -235,7 +235,6 @@ const config = {
 
   // --- Mazeret sistemi ---
   mazeretCooldownMs: int('MAZERET_COOLDOWN_MS', 300000), // kullanıcı başına bildirim bekleme süresi (5 dk)
-  // Mazeret bildirimlerinin düştüğü kanal (boşsa panelin kanalı kullanılır).
   // Mazeret bildirimlerinin düştüğü kanal (geriye uyumluluk: MAZERET_ADMIN_CHANNEL_ID boşsa burası kullanılır).
   mazeretChannelId: (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
   // YETKİLİ listesi panelinin kanalı — sadece yetkililer görecek.
