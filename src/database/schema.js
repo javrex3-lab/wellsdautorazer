@@ -167,6 +167,33 @@ CREATE TABLE IF NOT EXISTS mazeret_active_panels (
   PRIMARY KEY (guild_id, kind)
 );
 
+-- ===================== YENİ TICKET SİSTEMİ =====================
+-- Tek tablo: ticket_sessions. Eski "tickets" tablosu artık kullanılmaz;
+-- veri kaybı olmaması için SİLİNMEZ, sadece bot tarafından okunmaz.
+CREATE TABLE IF NOT EXISTS ticket_sessions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id    TEXT NOT NULL,
+  channel_id  TEXT UNIQUE,
+  owner_id    TEXT NOT NULL,
+  kind        TEXT NOT NULL CHECK (kind IN ('basvuru', 'sikayet', 'diger')),
+  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'accepted', 'rejected', 'closed')),
+  actor_id    TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  closed_at   INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_ts_channel ON ticket_sessions (channel_id);
+CREATE INDEX IF NOT EXISTS idx_ts_owner ON ticket_sessions (guild_id, owner_id, status);
+
+-- Ana panel mesajı kaydı (yalnız /ticketkur yazar; bot açılışında dokunulmaz).
+CREATE TABLE IF NOT EXISTS ticket_panel (
+  guild_id   TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS guard_whitelist (
   guild_id   TEXT NOT NULL,
   user_id    TEXT NOT NULL,

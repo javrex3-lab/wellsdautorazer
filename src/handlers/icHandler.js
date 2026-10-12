@@ -114,6 +114,8 @@ async function safeUpdate(interaction, payload) {
 
 async function handleIcButton(interaction) {
   let step = 'baslangic';
+  // Kararı veren yetkilinin görünen adı (panelde etiketle gösterilir)
+  const deciderTag = interaction.user?.tag || null;
   try {
     step = 'yetki kontrolu';
     if (!canManageTickets(interaction.member)) {
@@ -131,8 +133,6 @@ async function handleIcButton(interaction) {
       // Kirmizi "Hata" kutusu GOSTERILMEZ — butonlar sessizce kapatilir.
       logger.warn(`IC paneli #${panelId} için kayıt yok — panel kapatıldı.`);
       try {
-        // Kararı veren yetkilinin görünen adı (etiketle birlikte gösterilecek)
-    const deciderTag = interaction.user?.tag || null;
 
     await interaction.update({ components: [buildIcButtons(true)] });
       } catch {

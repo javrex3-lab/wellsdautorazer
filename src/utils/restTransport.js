@@ -10,7 +10,7 @@
  * Ortamda proxy YOKTUR (WinHTTP: direct, proxy env değişkeni yok) — gereksiz proxy ayarı eklenmedi.
  *
  * Kapatmak için: REST_HTTP1_ONLY=false
- * Süreler: REST_TIMEOUT_MS (varsayılan 60000), REST_CONNECT_TIMEOUT_MS (30000), REST_RETRIES (3)
+ * Süreler: REST_TIMEOUT_MS (varsayılan 60000), REST_CONNECT_TIMEOUT_MS (30000), REST_RETRIES (0)
  */
 
 const { Agent } = require('undici');
@@ -23,7 +23,15 @@ function intEnv(name, fallback) {
 // Production süreleri: DPI'lı ağlarda TLS handshake tek başına 10sn+ sürebiliyor (ölçüldü: ~12sn).
 const REST_TIMEOUT_MS = intEnv('REST_TIMEOUT_MS', 60000);
 const REST_CONNECT_TIMEOUT_MS = intEnv('REST_CONNECT_TIMEOUT_MS', 30000);
-const REST_RETRIES = intEnv('REST_RETRIES', 3);
+// retries: 0 — KRİTİK. @discordjs/rest, ağ hatası/5xx durumunda isteği TEKRAR
+// gönderir. Interaction callback (/interactions/{id}/{token}/callback) üzerinde
+// tekrar göndermek FELAKETTİR: ilk istek Discord'a ulaşıp işlenir, yanıt ağda
+// kaybolur (DPI / HTTP1.1 keep-alive kesintisi), kütüphane yeniden dener ve
+// Discord "40060 Interaction has already been acknowledged" döner. Bot da
+// "10062 Unknown interaction" görür — kullanıcı hiçbir yanıt almaz.
+// Discord hız sınırları zaten BurstHandler içinde yönetilir; `retries` onlar
+// için değil, bu bozucu senaryo içindir. 0 = asla tekrar gönderme.
+const REST_RETRIES = parseInt(process.env.REST_RETRIES || '0', 10) || 0;
 // Havuzdaki TLS bağlantısının boşta tutulma süresi. DPI'lı ağlarda YENİ handshake
 // 10sn+ sürer ve Discord etkileşim ACK'leri 3sn içinde gitmelidir; bu yüzden
 // bağlantılar uzun süre sıcak tutulur. (Cloudflare ~100sn'de kapatır, 60sn güvenli.)

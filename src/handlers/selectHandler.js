@@ -12,23 +12,46 @@ async function handleSelectMenu(interaction) {
   try {
     // --- String Select: ticket kategori menüsü ---
     if (interaction.isStringSelectMenu()) {
-      if (interaction.customId !== 'ticket_category') return false;
+      logger.info(`[SELECT GIRDI] customId=${interaction.customId} degerler=${JSON.stringify(interaction.values)}`);
+      if (interaction.customId !== 'ticket_category') {
+        logger.warn(`[SELECT REDDEDILDI] customId=${interaction.customId} (ticket_category değil)`);
+        return false;
+      }
 
       const value = interaction.values?.[0];
 
       // Seçimi sıfırla: SADECE menü ilk haline döner.
       // Embed'e bilinçli olarak DOKUNULMAZ (panel görseli neyse korunur).
       if (value === 'ticket_reset') {
-        await interaction.update({ components: [buildCategoryMenu()] }).catch(() => {});
-        await interaction
-          .followUp({ content: '🔄 Seçim sıfırlandı.', flags: MessageFlags.Ephemeral })
-          .catch(() => {});
+        // Hatalar YUTULMAZ: aynı etkileşimde update() de 404 alıyorsa
+        // sorun deferReply'ye değil, etkileşimin kendisine demektir.
+        try {
+          await interaction.update({ components: [buildCategoryMenu()] });
+          logger.info('[SELECT RESET] update başarılı — etkileşim GEÇERLİ');
+        } catch (err) {
+          logger.error(`[SELECT RESET] update BAŞARISIZ code=${err.code} status=${err.status} msg=${err.message}`);
+          throw err;
+        }
+        try {
+          await interaction.followUp({ content: '🔄 Seçim sıfırlandı.', flags: MessageFlags.Ephemeral });
+          logger.info('[SELECT RESET] followUp başarılı');
+        } catch (err) {
+          logger.warn(`[SELECT RESET] followUp BAŞARISIZ code=${err.code} msg=${err.message}`);
+        }
         return true;
       }
 
       // Kategori seçimi: ticketcat:<key>
       if (typeof value === 'string' && value.startsWith('ticketcat:')) {
-        await createTicketFromSelect(interaction, value.slice('ticketcat:'.length));
+        const key = value.slice('ticketcat:'.length);
+        logger.info(`[SELECT] ticket açılacak: key=${key}`);
+        try {
+          await createTicketFromSelect(interaction, key);
+          logger.info(`[SELECT] createTicketFromSelect döndü, key=${key}`);
+        } catch (err) {
+          logger.error(`[SELECT] createTicketFromSelect PATLADI: ${err.code || ''} ${err.message}`);
+          throw err;
+        }
         return true;
       }
 

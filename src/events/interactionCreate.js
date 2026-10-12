@@ -29,6 +29,12 @@ module.exports = {
 
   async execute(interaction) {
     const label = labelOf(interaction);
+
+    // Her etkileşim gelişinde id loglanır. AYNI id iki kez görünürse
+    // etkileşim çift işleniyor demektir (40060 sebebi).
+    try {
+      logger.info(`GELEN ETKİLEŞİM id=${interaction.id} tip=${interaction.type} customId=${interaction.customId || '-'} user=${interaction.user?.id}`);
+    } catch {}
     const start = Date.now();
 
     try {

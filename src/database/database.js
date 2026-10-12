@@ -268,6 +268,16 @@ module.exports = {
   deleteSetting,
   upsertTicketPanel,
   getTicketPanel,
+  // --- Yeni ticket sistemi ---
+  createTicketSession,
+  setTicketChannel,
+  getTicketByChannel,
+  getOpenTicketByUser,
+  setTicketStatus,
+  endTicketSession,
+  upsertTicketPanel,
+  getTicketPanel,
+  deleteTicketPanel,
   upsertMazeretPanel,
   getMazeretPanel,
   // --- Mazeret kayıtları ---
@@ -568,6 +578,131 @@ function getTicketPanel(guildId) {
 }
 
 // ---------- Mazeret panel mesajı (sunucu başına tek) ----------
+
+// ================= YENİ TICKET SİSTEMİ =================
+
+/** Yeni ticket kaydı oluşturur (kanal henüz açılmamış, channel_id null). */
+function createTicketSession({ guildId, ownerId, kind }) {
+  try {
+    const now = Date.now();
+    const res = getDb()
+      .prepare(
+        `INSERT INTO ticket_sessions (guild_id, channel_id, owner_id, kind, status, created_at, updated_at)
+         VALUES (?, NULL, ?, ?, 'open', ?, ?)`
+      )
+      .run(String(guildId), String(ownerId), String(kind), now, now);
+    const id = Number(res.lastInsertRowid);
+    return { id, guild_id: String(guildId), owner_id: String(ownerId), kind: String(kind), status: 'open', channel_id: null };
+  } catch (err) {
+    logger.error(`[DB] createTicketSession failed: ${guildId}/${ownerId}`, err);
+    return null;
+  }
+}
+
+function setTicketChannel(id, channelId) {
+  try {
+    getDb()
+      .prepare('UPDATE ticket_sessions SET channel_id = ?, updated_at = ? WHERE id = ?')
+      .run(String(channelId), Date.now(), Number(id));
+    return true;
+  } catch (err) {
+    logger.error(`[DB] setTicketChannel failed: ${id}`, err);
+    return false;
+  }
+}
+
+/** Kanal ID'sinden ticket bulur (kanal adına güvenilmez). */
+function getTicketByChannel(channelId) {
+  try {
+    if (!channelId) return null;
+    return getDb().prepare('SELECT * FROM ticket_sessions WHERE channel_id = ?').get(String(channelId)) || null;
+  } catch (err) {
+    logger.error(`[DB] getTicketByChannel failed: ${channelId}`, err);
+    return null;
+  }
+}
+
+/** Kullanıcının hâlâ açık ticket'ı (yoksa null). */
+function getOpenTicketByUser(guildId, userId) {
+  try {
+    return (
+      getDb()
+        .prepare(
+          "SELECT * FROM ticket_sessions WHERE guild_id = ? AND owner_id = ? AND status = 'open' AND channel_id IS NOT NULL ORDER BY id DESC LIMIT 1"
+        )
+        .get(String(guildId), String(userId)) || null
+    );
+  } catch (err) {
+    logger.error(`[DB] getOpenTicketByUser failed: ${guildId}/${userId}`, err);
+    return null;
+  }
+}
+
+/** Durum değiştirir (accepted / rejected / closed). */
+function setTicketStatus(id, status, { actorId = null } = {}) {
+  try {
+    const now = Date.now();
+    getDb()
+      .prepare("UPDATE ticket_sessions SET status = ?, actor_id = COALESCE(?, actor_id), updated_at = ?, closed_at = CASE WHEN ? = 'closed' THEN ? ELSE closed_at END WHERE id = ?")
+      .run(String(status), actorId ? String(actorId) : null, now, String(status), now, Number(id));
+    return true;
+  } catch (err) {
+    logger.error(`[DB] setTicketStatus failed: ${id}`, err);
+    return false;
+  }
+}
+
+/** Kanal açılamadı gibi durumlarda kaydı kapatır (kanal silinmez). */
+function endTicketSession(id, { reason = 'ended' } = {}) {
+  try {
+    const now = Date.now();
+    getDb()
+      .prepare("UPDATE ticket_sessions SET status = 'closed', updated_at = ?, closed_at = ? WHERE id = ?")
+      .run(now, now, Number(id));
+    logger.info(`[DB] ticket #${id} sonlandırıldı (${reason})`);
+    return true;
+  } catch (err) {
+    logger.error(`[DB] endTicketSession failed: ${id}`, err);
+    return false;
+  }
+}
+
+/** Ana panel mesajını hatırlar. YALNIZCA /ticketkur yazar. */
+function upsertTicketPanel(guildId, channelId, messageId) {
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO ticket_panel (guild_id, channel_id, message_id, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id,
+           message_id = excluded.message_id, updated_at = excluded.updated_at`
+      )
+      .run(String(guildId), String(channelId), String(messageId), Date.now());
+    return true;
+  } catch (err) {
+    logger.error(`[DB] upsertTicketPanel failed: ${guildId}`, err);
+    return false;
+  }
+}
+
+function getTicketPanel(guildId) {
+  try {
+    return getDb().prepare('SELECT * FROM ticket_panel WHERE guild_id = ?').get(String(guildId)) || null;
+  } catch (err) {
+    logger.error(`[DB] getTicketPanel failed: ${guildId}`, err);
+    return null;
+  }
+}
+
+function deleteTicketPanel(guildId) {
+  try {
+    getDb().prepare('DELETE FROM ticket_panel WHERE guild_id = ?').run(String(guildId));
+    return true;
+  } catch (err) {
+    logger.error(`[DB] deleteTicketPanel failed: ${guildId}`, err);
+    return false;
+  }
+}
+
 
 function upsertMazeretPanel(guildId, channelId, messageId) {
   try {

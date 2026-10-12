@@ -202,7 +202,64 @@ async function createTicketFromSelect(interaction, categoryKey) {
   }
   trace(stage, 3, 'kullanıcı + kategori doğrulandı', `key=${categoryKey} label=${category.label}`);
 
-  await interaction.deferReply({ ...EPH() });
+  // --- TOKEN KARAKTER ANALİZİ ---
+  // Discord token'ı base64 ise '+', '/' veya '=' içerebilir. discord.js token'ı
+  // URL'de kodlamadan kullanır; '+' boşluğa dönüşür, token BOZULUR ve Discord
+  // 10062 'Unknown interaction' döner. Burada token'ın karakter kümesini ölçüyoruz.
+  try {
+    const tk = String(interaction.token || '');
+    const kotu = tk.match(/[^A-Za-z0-9\-_.~]/g);
+    const envanter = {
+      toplam: tk.length,
+      artı: (tk.match(/\+/g) || []).length,
+      bolu: (tk.match(/\//g) || []).length,
+      esittir: (tk.match(/=/g) || []).length,
+      yuzde: (tk.match(/%/g) || []).length,
+      diger: kotu ? [...new Set(kotu)].join('') : '-',
+    };
+    logger.info('TOKEN_KARAKTER ' + JSON.stringify(envanter));
+    if (envarter.artı || envarter.bolu || envarter.esittir) {
+      logger.error(`TOKEN_KARAKTER URL-GÜVENSİZ! ${envarter.artı} '+' , ${envarter.bolu} '/', ${envarter.esittir} '=' — bu 10062 sebebi olabilir.`);
+    }
+  } catch (e) {
+    logger.warn('TOKEN_KARAKTER analiz hatası: ' + e.message);
+  }
+
+  // --- HAM FETCH TESTİ: discord.js ve özel agent devre dışı ---
+  // Amaç: 404/10062 istemci (agent/URL) kaynaklı mı, token gerçekten ölü mü?
+  if (process.env.TICKET_RAW_TEST === '1') {
+    try {
+      const { fetch } = require('undici');
+      const url = `https://discord.com/api/v10/interactions/${interaction.id}/${interaction.token}/callback`;
+      const seg = url.split('/').map((x) => (x === interaction.token ? 'TOKEN(' + x.length + ')' : x));
+      logger.info('HAM FETCH TEST url=' + seg.join('/'));
+      const t0 = Date.now();
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bot ' + interaction.client.token,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 5, data: { flags: 64 } }),
+      });
+      const body = await r.text();
+      logger.info(`HAM FETCH TEST sonuc HTTP ${r.status} (${Date.now() - t0}ms) govde=${body.slice(0, 100)}`);
+    } catch (e) {
+      logger.error(`HAM FETCH TEST hata: ${e.code || e.message}`);
+    }
+  }
+
+  await interaction.deferReply({ ...EPH() }).catch((err) => {
+    logger.error(
+      `[ticket ${categoryKey}] deferReply BAŞARISIZ code=${err.code} status=${err.status} msg=${err.message} ` +
+        `raw=${JSON.stringify(err.rawError || null)} ixId=${interaction.id} ` +
+        `token=${interaction.token ? 'var(' + interaction.token.length + ')' : 'YOK'} ` +
+      `app=${interaction.applicationId} type=${interaction.type} ` +
+      `replied=${interaction.replied} deferred=${interaction.deferred} ack=${interaction.acknowledged} ` +
+      `botId=${interaction.client?.user?.id}`,
+    );
+    throw err;
+  });
   trace(stage, 2, 'ACK verildi (deferReply)');
 
   try {
