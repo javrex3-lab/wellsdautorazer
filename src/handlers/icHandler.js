@@ -14,6 +14,19 @@ const { createIcRequest, getIcByPanel, getPendingIc, decideIc, setIcPanel } = re
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Kullanici avatar URL'sini guvenle dondurur.
+ * Uye yoksa / URL gecersizse null (embed avatarsiz gonderilir, cokmez).
+ */
+function safeAvatar(user) {
+  try {
+    const u = user?.displayAvatarURL?.({ extension: 'png', size: 256 });
+    return typeof u === 'string' && /^https:\/\//i.test(u) ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Talep metnini çöz: önce event içeriği (MessageContent intent'i açıksa anında),
  * yoksa API'den kısa retry ile çek. { text, ok } döner.
  */
@@ -64,6 +77,7 @@ async function handleIcMessage(message) {
         buildIcPanelEmbed({
           userId: user.id,
           userTag: user.tag,
+          userAvatar: safeAvatar(user),
           requestedText: text,
           unreadable: !ok,
           status: 'pending',
@@ -144,6 +158,7 @@ async function handleIcButton(interaction) {
         buildIcPanelEmbed({
           userId: fresh.user_id,
           userTag,
+          userAvatar: safeAvatar(targetMember?.user),
           requestedText: fresh.requested_text,
           status: fresh.status,
           decidedBy: fresh.decided_by,

@@ -92,21 +92,72 @@ function buildErrorEmbed(description) {
 }
 
 /**
- * IC isim onay paneli. status: 'pending' | 'approved' | 'rejected'
+ * IC isim onay paneli — ekran goruntusundeki tasarim.
+ * status: 'pending' | 'approved' | 'rejected'
  */
-function buildIcPanelEmbed({ userId, userTag = null, requestedText, unreadable = false, status = 'pending', decidedBy = null, createdUnix = null }) {
-  const statusText =
-    status === 'approved' ? `✅ Onaylandı${decidedBy ? ` — <@${decidedBy}>` : ''}` : status === 'rejected' ? `❌ Reddedildi${decidedBy ? ` — <@${decidedBy}>` : ''}` : '🟡 Onay Bekliyor';
-  const text = String(requestedText || '').trim();
-  const talepValue = text ? `\`\`\`\n${text.slice(0, 1000)}\n\`\`\`` : unreadable ? '*okunamadı*' : '*boş mesaj*';
-  const embed = baseEmbed(config.colors.clear)
-    .setTitle('📝 IC İsim Talebi')
-    .addFields(
-      { name: 'Kullanıcı:', value: userTag ? `<@${userId}>\n\`${userTag}\`` : `<@${userId}>`, inline: false },
-      { name: 'Talep Edilen İsim:', value: talepValue, inline: false },
-      { name: 'Durum:', value: statusText, inline: false },
-    );
-  if (createdUnix) embed.setDescription(`<t:${createdUnix}:R> oluşturuldu.`);
+function buildIcPanelEmbed({
+  userId,
+  userTag = null,
+  userAvatar = null,
+  requestedText,
+  unreadable = false,
+  status = 'pending',
+  decidedBy = null,
+  createdUnix = null,
+}) {
+  const raw = String(requestedText || '');
+  const text = raw.trim();
+
+  // Talep edilen isim kutu içinde gösterilir. Uzun metin taşmasın diye kısaltılır.
+  const shown = text ? text.slice(0, 500) : unreadable ? 'okunamadı' : 'boş mesaj';
+  const codeBlock =
+    shown.length > 60 || shown.includes('`')
+      ? '```\n' + shown.replace(/`/g, "'") + '\n```'
+      : '`' + shown + '`';
+
+  // --- Ana blok ---
+  const lines = [
+    '> ' + userTag + ' adlı kişi IC isim talebinde bulundu.',
+    '**İsim:** Talep Edilen İsim',
+    codeBlock,
+  ];
+
+  // --- Durum satırı (karar verildiyse) ---
+  let statusLine;
+  if (status === 'approved') {
+    statusLine = '✅ Onaylandı' + (decidedBy ? ' — <@' + decidedBy + '>' : '');
+  } else if (status === 'rejected') {
+    statusLine = '❌ Reddedildi' + (decidedBy ? ' — <@' + decidedBy + '>' : '');
+  } else if (createdUnix) {
+    statusLine = '🟡 Onay bekliyor · <t:' + createdUnix + ':R>';
+  } else {
+    statusLine = '🟡 Onay bekliyor';
+  }
+
+  const isDecided = status === 'approved' || status === 'rejected';
+  const full = lines.slice();
+  if (isDecided) {
+    full.push('');
+    full.push('────────────────');
+    full.push(statusLine);
+  }
+
+  const embed = baseEmbed(isDecided && status === 'rejected' ? config.colors.error : config.colors.clear)
+    .setTitle('IC İSİM TALEBİ')
+    .setDescription(full.join('\n'));
+
+  // Sağ üstte talep edenin avatarı (ekrandaki görsel ile aynı yerleşim).
+  if (userAvatar) {
+    try {
+      embed.setThumbnail(userAvatar);
+    } catch {
+      /* geçersiz URL olursa avatar yok sayılır */
+    }
+  }
+
+  if (isDecided) {
+    embed.setFooter({ text: statusLine.replace('<@' + (decidedBy || '') + '>', 'Yetkili') });
+  }
   return embed;
 }
 
