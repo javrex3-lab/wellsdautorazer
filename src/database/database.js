@@ -38,11 +38,56 @@ function initDatabase() {
     db.exec(SCHEMA);
     migrate(db);
     logger.db(`Veritabanı hazır: ${dbPath}`);
+    reportPersistence(dbPath);
     return db;
   } catch (err) {
     logger.error('Veritabanı başlatılamadı.', err);
     throw err;
   }
+}
+
+/**
+ * Kalıcılık teşhisi — whitelist/ticket kayıtlarının korunup korunmayacağını
+ * AÇILIRKEN görünür kılar. Sessiz veri kaybı olmasın.
+ */
+function reportPersistence(dbPath) {
+  const kalici = config.dbIsPersistent !== false;
+  const yol = path.resolve(dbPath);
+
+  logger.info('─'.repeat(58));
+  logger.info(`DB konumu        : ${yol}`);
+  logger.info(`DB kalıcı mı     : ${kalici ? 'EVET (kalıcı disk)' : 'HAYIR — GEÇİCİ DOSYA SİSTEMİ'}`);
+
+  // Yazılabilir mi? (volume mount yanlışsa erişim reddedilir)
+  try {
+    fs.accessSync(path.dirname(yol), fs.constants.W_OK);
+  } catch {
+    logger.error(`DB klasörü YAZILAMAZ: ${path.dirname(yol)} — kayıtlar kaydedilemez!`);
+  }
+
+  // Whitelist durumu — sıfırlanırsa burada HEMEN görünür
+  try {
+    const n = getDb().prepare('SELECT COUNT(*) AS c FROM guard_whitelist').get().c;
+    logger.info(`Guard whitelist  : ${n} kayıt`);
+    if (n === 0) {
+      logger.warn('Whitelist boş. Bu normal DEĞİLSE veritabanı sıfırlanmış olabilir (redeploy?).');
+    }
+  } catch (err) {
+    logger.error('Whitelist okunamadı (veri bozulmuş olabilir):', err);
+  }
+
+  if (!kalici) {
+    const satirlar = [
+      '',
+      '!!! VERİ KALICI DEĞİL — HER REDEPLOY\'DA SIFIRLANIR !!!',
+      '    Çözüm: Railway → proje → Volume ekle → mount path = /data',
+      '    (RAILWAY_VOLUME_MOUNT_PATH otomatik gelir; DB yolu otomatik',
+      '     oraya taşınır. DB_PATH kalıcı olmayan yolsa bile mount kazanır.)',
+      '',
+    ];
+    for (const s of satirlar) logger.error(s);
+  }
+  logger.info('─'.repeat(58));
 }
 
 /**

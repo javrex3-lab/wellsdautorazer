@@ -235,19 +235,29 @@ const config = {
   // PaaS (Railway) dosya sistemi GEÇİCİDİR: volume mount edilmezse her
   // deploy'da DB sıfırlanır (ticket/guard/whitelist kayıtları gider).
   dbPath: (() => {
-    const explicit = (process.env.DB_PATH || '').trim();
-    if (explicit) return explicit;
-
-    // Railway volume: RAILWAY_VOLUME_MOUNT_PATH her mount'ta otomatik gelir.
+    // ÖNEMLİ: Platformda mount edilmiş KALICI disk varsa o HER ZAMAN kazanır.
+    // DB_PATH onun dışında bir yer gösteriyorsa disk dışına yazılır ve veri
+    // redeploy'da kaybolur — bu yüzden mount varsa DB_PATH yok sayılır.
     const mount = (process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
     if (mount) return path.join(mount, 'wellsd.db');
 
-    // RAILWAY_ENVIRONMENT varsa ama mount yoksa uyarı ver (veri kaybı riski).
-    if ((process.env.RAILWAY_ENVIRONMENT || '').trim()) {
-      console.warn('[WARN] Railway tespit edildi ama DB_PATH tanımlı değil ve volume mount yolu yok.');
-      console.warn('[WARN] Veriler her deploy\'da silinecek. Railway → Volume ekleyip mount path = /data yapın.');
-    }
+    const explicit = (process.env.DB_PATH || '').trim();
+    if (explicit) return explicit;
+
     return './data/wellsd.db';
+  })(),
+
+  // Veritabanı KALICI bir diske mi yazıyor? false ise her redeploy'da
+  // whitelist/ticket/log kayıtları SIFIRLANIR. Railway tespiti + mount yok.
+  dbIsPersistent: (() => {
+    if ((process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim()) return true;
+    if (!(process.env.RAILWAY_ENVIRONMENT || '').trim()) return true; // Railway değil → yerel disk kalıcı
+    // Railway'de çalışıyoruz: DB_PATH mutlaka mount yolunu göstermeli.
+    const p = (process.env.DB_PATH || '').trim();
+    const mount = (process.env.RAILWAY_VOLUME_MOUNT_PATH || '').trim();
+    if (p && mount && !path.resolve(p).startsWith(path.resolve(mount))) return false;
+    if (p && mount) return true;
+    return false;
   })(),
 
   // --- FiveM canlı oyuncu sorgu ---
