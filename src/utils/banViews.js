@@ -67,7 +67,7 @@ function ts(ms, style = 'f') {
 /* 1) Panel                                                            */
 /* ------------------------------------------------------------------ */
 
-function buildPanelEmbed({ guildName = null } = {}) {
+function buildPanelEmbed({ guildName = null, imageUrl = null } = {}) {
   const embed = new EmbedBuilder()
     .setColor(0xe74c3c)
     .setTitle('BANLILAR BİLDİRİM SİSTEMİ')
@@ -75,6 +75,7 @@ function buildPanelEmbed({ guildName = null } = {}) {
       'Oyun sunucusundan yasaklandıysanız ban bilgilerinizi aşağıdaki buton üzerinden bildirebilirsiniz. ' +
         'Girdiğiniz bilgileri eksiksiz ve doğru şekilde doldurunuz.',
     );
+  if (imageUrl) embed.setImage(imageUrl);
   if (guildName) embed.setFooter({ text: guildName });
   return embed;
 }

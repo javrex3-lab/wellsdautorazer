@@ -14,6 +14,7 @@
 const { SlashCommandBuilder, MessageFlags, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { buildErrorEmbed, buildSuccessEmbed } = require('../utils/embeds');
 const { buildPanelEmbed, buildBildirRow } = require('../utils/banViews');
+const { panelGorseli, panelDosyalari } = require('../utils/panelImage');
 const { getBanPanel, upsertBanPanel, getBanBildirimleri } = require('../database/database');
 const { canManageTickets } = require('../utils/permissions');
 const config = require('../config');
@@ -75,7 +76,9 @@ module.exports = {
         }
       }
 
-      const embed = buildPanelEmbed({ guildName: interaction.guild.name });
+    // Panel görseli: repo içindeki dosya mesaja eklenir (attachment://).
+    const gorsel = panelGorseli();
+    const embed = buildPanelEmbed({ guildName: interaction.guild.name, imageUrl: gorsel.imageUrl || null });
       const row = buildBildirRow();
 
       // Duplicate engeli: kayıtlı panel varsa DÜZENLE, yeni mesaj gönderme.
@@ -90,7 +93,12 @@ module.exports = {
         }
       }
       if (!mesaj) {
-        mesaj = await hedef.send({ embeds: [embed], components: [row] });
+      const files = panelDosyalari(gorsel, true);
+      mesaj = await hedef.send({
+        embeds: [embed],
+        components: [row],
+        ...(files.length ? { files } : {}),
+      });
         upsertBanPanel(guildId, hedef.id, mesaj.id);
       }
 

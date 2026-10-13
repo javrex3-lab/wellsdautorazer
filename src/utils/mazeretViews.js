@@ -95,7 +95,7 @@ function ts(ms, style = 'f') {
 /* ------------------------------------------------------------------ */
 
 /** Başlık sabit: MAZERET BİLDİRİM SİSTEMİ */
-function buildPanelEmbed({ guildName = null, activeCount = null } = {}) {
+function buildPanelEmbed({ guildName = null, activeCount = null, imageUrl = null } = {}) {
   const embed = new EmbedBuilder()
     .setColor(config.colors.mazeret)
     .setTitle('MAZERET BİLDİRİM SİSTEMİ')
@@ -123,6 +123,7 @@ function buildPanelEmbed({ guildName = null, activeCount = null } = {}) {
   if (Number.isInteger(activeCount) && activeCount > 0) {
     embed.addFields({ name: '📊 Şu an mazeretli', value: `**${activeCount}** kişi`, inline: true });
   }
+  if (imageUrl) embed.setImage(imageUrl);
   if (guildName) embed.setFooter({ text: guildName });
 
   return embed;

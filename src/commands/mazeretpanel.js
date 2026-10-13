@@ -12,6 +12,7 @@
 const { SlashCommandBuilder, MessageFlags, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { buildErrorEmbed, buildSuccessEmbed } = require('../utils/embeds');
 const { buildPanelEmbed, buildBildirRow } = require('../utils/mazeretViews');
+const { panelGorseli, panelDosyalari } = require('../utils/panelImage');
 const {
   getActiveMazerets,
   upsertMazeretActivePanel,
@@ -75,7 +76,13 @@ module.exports = {
       }
 
       const aktif = getActiveMazerets(guildId).length;
-      const embed = buildPanelEmbed({ guildName: interaction.guild.name, activeCount: aktif });
+    // Panel görseli: repo içindeki dosya mesaja eklenir (attachment://).
+    const gorsel = panelGorseli();
+    const embed = buildPanelEmbed({
+      guildName: interaction.guild.name,
+      activeCount: aktif,
+      imageUrl: gorsel.imageUrl || null,
+    });
       const row = buildBildirRow();
 
       // Duplicate engeli: aynı kanalda kayıtlı panel varsa DÜZENLE
@@ -90,7 +97,12 @@ module.exports = {
         }
       }
       if (!mesaj) {
-        mesaj = await hedef.send({ embeds: [embed], components: [row] });
+      const files = panelDosyalari(gorsel, true);
+      mesaj = await hedef.send({
+        embeds: [embed],
+        components: [row],
+        ...(files.length ? { files } : {}),
+      });
         upsertMazeretActivePanel(guildId, 'public', hedef.id, mesaj.id);
       }
 
