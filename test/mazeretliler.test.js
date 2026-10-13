@@ -38,15 +38,15 @@ section('1) KOMUT TANIMI');
 check('Dosya mevcut', fs.existsSync(path.join(KOK, 'src/commands/mazeretliler.js')));
 check('Komut adı /mazeretliler', komut.data.name === 'mazeretliler', komut.data.name);
 check('execute fonksiyonu var', typeof komut.execute === 'function');
-check('Yetkili kapısı (openToRoleManagers)', komut.openToRoleManagers === true);
-check('Herkese açık DEĞİL', komut.openToEveryone !== true);
+check('HERKES kullanabilir (openToEveryone)', komut.openToEveryone === true, String(komut.openToEveryone));
+check('Yetkili kapısı YOK (herkes)', komut.openToRoleManagers !== true, String(komut.openToRoleManagers));
 {
   const s = fs.readFileSync(path.join(KOK, 'src/commands/mazeretliler.js'), 'utf8');
-  check('canManageTickets kontrolü var', /canManageTickets\(interaction\.member\)/.test(s));
+  check('Yetki engeli YOK (herkes çalıştırabilir)', !/canManageTickets/.test(s));
   check('Süresi dolmuşları kapatıyor', /expireMazerets\(interaction\.guildId\)/.test(s));
   check('Yalnızca aktifleri okuyor', /getActiveMazerets\(interaction\.guildId\)/.test(s));
   check('Merkezi paneli tazeliyor', /refreshMerkeziPanel/.test(s));
-  check('Ephemeral yanıt veriyor', /MessageFlags\.Ephemeral/.test(s));
+  check('Ephemeral DEĞİL (herkes görsün)', !/MessageFlags\.Ephemeral/.test(s));
   check('Kanala mesaj göndermiyor (spam yok)', !/interaction\.channel\.send/.test(s));
   check('Referans görünümü kullanıyor', /buildMazeretliListesiEmbed/.test(s));
 }
@@ -152,13 +152,14 @@ section('3) KOMUT ÇALIŞTIRMA (sahte Discord)');
     };
   };
 
-  // Yetkisiz
+  // HERKES kullanabilmeli (yetki engeli olmamalı)
   {
     const i = etkilesim({ staff: false });
     await komut.execute(i);
-    const y = JSON.stringify(i._c.reply || {});
-    check('Yetkisiz kullanıcı reddediliyor', y.includes('yetkililer'), y.slice(0, 120));
-    check('Yetkisize ephemeral hata', i._c.reply?.flags === 64, String(i._c.reply?.flags));
+    check('Yetkisiz kullanıcı da komutu kullanabiliyor', i._c.reply !== null);
+    check('Yanıt herkese açık (ephemeral DEĞİL)', i._c.reply?.flags !== 64, String(i._c.reply?.flags));
+    check('Yetki hatası verilmedi', !JSON.stringify(i._c.reply || {}).includes('yalnızca yetkililer'));
+    check('Başlık doğru', JSON.stringify(i._c.reply || {}).includes('Aktif Mazeretli Memurlar'));
   }
 
   // Yetkili, kayıt yokken
@@ -166,8 +167,8 @@ section('3) KOMUT ÇALIŞTIRMA (sahte Discord)');
     const i = etkilesim({ staff: true });
     await komut.execute(i);
     const y = JSON.stringify(i._c.reply || {});
-    check('Yetkili komutu kullanabiliyor', i._c.reply !== null);
-    check('Ephemeral yanıt', i._c.reply?.flags === 64);
+    check('Komut çalışıyor', i._c.reply !== null);
+    check('Yanıt herkese açık (ephemeral DEĞİL)', i._c.reply?.flags !== 64, String(i._c.reply?.flags));
     check('Başlık doğru', y.includes('Aktif Mazeretli Memurlar'));
     check('Boş mesaj gösteriliyor', y.includes('bulunmuyor'));
   }

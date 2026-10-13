@@ -1,43 +1,32 @@
 /**
- * /mazeretliler - Aktif mazeretli listesini ANINDA gösterir.
+ * /mazeretliler - Aktif mazeretli listesini gösterir.
  *
  * Ne yapar:
  *   - Kalıcı depodan yalnızca bitişi gelmemiş kayıtları okur
  *   - Listeyi referans düzende (1) ⬇️ <@kullanıcı> / Süre / Sebep / Bitiş)
- *     ephemeral olarak sana gösterir — kanala mesaj yazmaz, spam yapmaz
+ *     HERKESİN GÖREBİLECEĞİ bir mesaj olarak gönderir
  *   - Merkezi paneli (MAZERET_ADMIN_CHANNEL_ID) de tazeler ki orada da güncel kalsın
  *
- * NOT: Liste kişisel mazeret sebebi içerdiği için komut yetkililere açıktır.
+ * NOT: Liste herkese açıktır — komut ve yanıt ephemeral DEĞİLDİR.
  */
-const { SlashCommandBuilder, MessageFlags } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { buildErrorEmbed } = require('../utils/embeds');
 const { buildMazeretliListesiEmbed } = require('../utils/mazeretViews');
 const { getActiveMazerets, expireMazerets } = require('../database/database');
-const { canManageTickets } = require('../utils/permissions');
-const { refreshMerkeziPanel, merkeziKanalId } = require('../handlers/mazeret');
+const { refreshMerkeziPanel } = require('../handlers/mazeret');
 const logger = require('../utils/logger');
 
 module.exports = {
-  openToRoleManagers: true,
+  // HERKES kullanabilir (global komut kapısı bu bayrla atlanır).
+  openToEveryone: true,
   data: new SlashCommandBuilder()
     .setName('mazeretliler')
-    .setDescription('Aktif mazeretli memurların listesini gösterir (yalnızca yetkililer).'),
+    .setDescription('Aktif mazeretli memurların listesini gösterir.'),
 
   async execute(interaction) {
     if (!interaction.guild) {
       return interaction
-        .reply({
-          embeds: [buildErrorEmbed('Bu komut yalnızca sunucuda kullanılabilir.')],
-          flags: MessageFlags.Ephemeral,
-        })
-        .catch(() => {});
-    }
-    if (!canManageTickets(interaction.member)) {
-      return interaction
-        .reply({
-          embeds: [buildErrorEmbed('Bu komutu yalnızca yetkililer kullanabilir.')],
-          flags: MessageFlags.Ephemeral,
-        })
+        .reply({ embeds: [buildErrorEmbed('Bu komut yalnızca sunucuda kullanılabilir.')] })
         .catch(() => {});
     }
 
@@ -49,14 +38,8 @@ module.exports = {
 
       const { embed } = buildMazeretliListesiEmbed(rows, { now: Date.now() });
 
-      const merkezi = merkeziKanalId();
-      const yanit = await interaction
-        .reply({ embeds: [embed], flags: MessageFlags.Ephemeral })
-        .catch(() => null);
-
-      if (!yanit) {
-        await interaction.editReply({ embeds: [embed] }).catch(() => {});
-      }
+      // HERKES görsün diye ephemeral DEĞİL — normal mesaj.
+      await interaction.reply({ embeds: [embed] }).catch(() => {});
 
       // Merkezi paneli de tazele (oradaki tek mesaj güncellenir, yeni mesaj oluşmaz)
       let merkeziOk = null;
@@ -65,19 +48,13 @@ module.exports = {
       } catch (err) {
         logger.warn(`[mazeretliler] merkezi panel tazelenemedi: ${err.code || err.message}`);
       }
-      if (merkeziOk && merkezi) {
-        logger.info(
-          `/mazeretliler: ${interaction.user.tag} listeyi görüntüledi (${rows.length} aktif) · merkezi panel tazelendi`,
-        );
-      } else {
-        logger.info(`/mazeretliler: ${interaction.user.tag} listeyi görüntüledi (${rows.length} aktif)`);
-      }
+
+      logger.info(
+        `/mazeretliler: ${interaction.user.tag} listesi gösterildi (${rows.length} aktif) · merkezi panel=${merkeziOk ? 'tazelendi' : 'güncellenemedi'}`,
+      );
     } catch (err) {
       logger.error('Interaction failed: /mazeretliler.', err);
-      const payload = {
-        embeds: [buildErrorEmbed('Mazeret listesi alınamadı. Lütfen tekrar deneyin.')],
-        flags: MessageFlags.Ephemeral,
-      };
+      const payload = { embeds: [buildErrorEmbed('Mazeret listesi alınamadı. Lütfen tekrar deneyin.')] };
       if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => {});
       else await interaction.reply(payload).catch(() => {});
     }
