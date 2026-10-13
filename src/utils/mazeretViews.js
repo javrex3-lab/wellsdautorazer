@@ -222,42 +222,46 @@ function buildKayitOnayEmbed({ rec, sureLabel }) {
  * @param {{page:number, pageCount:number, now:number}} o
  * @returns {{embed:EmbedBuilder, toplamSayfa:number}} her zaman bu tipi döner
  */
-function buildAktifPanelEmbed(rows = [], { page = 1, pageCount = 1, now = Date.now() } = {}) {
+/**
+ * AKTİF MAZERETLİ MEMURLAR — merkezi panel (sayfalı).
+ *
+ * Format (spec):  1) 👤 @Kullanıcı  /  Süre / Bitiş / Sebep
+ * Bitiş Discord göreli zaman damgasıyla (<t:unix:R>) gösterilir.
+ * Sebep guvenliMetin() ile sanitize edilir — mention PING oluşturmaz.
+ *
+ * @param {Array} rows aktif kayıtlar
+ * @param {{page:number, now:number}} o
+ * @returns {{embed:EmbedBuilder, toplamSayfa:number, sayfa:number}}
+ */
+function buildAktifPanelEmbed(rows = [], { page = 1, now = Date.now() } = {}) {
   const embed = new EmbedBuilder()
     .setColor(config.colors.mazeret)
     .setTitle('Aktif Mazeretli Memurlar')
-    .setDescription(
-      'Aşağıda departman bünyesinde aktif olarak mazeretli olan kullanıcıları görebilirsiniz.',
-    );
+    .setDescription('Aşağıda departman bünyesinde aktif olarak mazeretli olan kullanıcıları görebilirsiniz.');
 
   if (!rows.length) {
     embed.setDescription(
       'Aşağıda departman bünyesinde aktif olarak mazeretli olan kullanıcıları görebilirsiniz.\n\n' +
-        '🟢 *Şu anda mazeretli memur bulunmuyor.*',
+      'Şu anda aktif mazeretli kullanıcı bulunmuyor.'
     );
     embed.setFooter({ text: 'Panel otomatik güncellenir' });
-    return { embed, toplamSayfa: 1 };
+    return { embed, toplamSayfa: 1, sayfa: 1 };
   }
 
-  // Açıklama limiti 4096; sayfa başına sığan kayıt sayısı burada hesaplanır.
+  // Discord embed açıklaması sınırı 4096. Sığmayan kayıt yeni sayfaya TAŞINIR
+  // (kesilmez — hiçbir aktif kayıt sessizce kaybolmaz).
   const LIM = 3800;
-  const blok = (r) => {
-    const bas = Number(r.started_at ?? r.created_at);
-    return (
-      `**${'👤'} <@${r.user_id}>**\n` +
-      `　├ **Süre:** ${sureMetni(r.duration_ms)}\n` +
-      `　├ **Başlangıç:** ${ts(bas)}\n` +
-      `　├ **Bitiş:** ${ts(r.expires_at)}\n` +
-      `　├ **Sebep:** ${guvenliMetin(r.reason, 300)}\n` +
-      `　└ **Durum:** 🟢 Aktif · _${kalanEtiket(r.expires_at, now)}_`
-    );
-  };
+  const blok = (r, no) =>
+    `**${no}) 👤** <@${r.user_id}>\n` +
+    `     ├ **Süre:** ${sureMetni(r.duration_ms)}\n` +
+    `     ├ **Bitiş:** <t:${Math.floor(r.expires_at / 1000)}:R> (${ts(r.expires_at)})\n` +
+    `     └ **Sebep:** ${guvenliMetin(r.reason, 300)}`;
 
   const sayfalar = [];
   let cur = [];
   let len = 0;
-  for (const r of rows) {
-    const b = blok(r);
+  rows.forEach((r, i) => {
+    const b = blok(r, i + 1);
     if (len + b.length > LIM && cur.length) {
       sayfalar.push(cur);
       cur = [];
@@ -265,17 +269,15 @@ function buildAktifPanelEmbed(rows = [], { page = 1, pageCount = 1, now = Date.n
     }
     cur.push(b);
     len += b.length + 2;
-  }
+  });
   if (cur.length) sayfalar.push(cur);
 
-  // Sayfa sayısı tekrar hesaplanır (dis GIRDI)
-  const p = Math.min(Math.max(1, Number(page) || 1), sayfalar.length);
   const toplamSayfa = sayfalar.length;
-  const icerik = sayfalar[p - 1];
+  const p = Math.min(Math.max(1, Number(page) || 1), toplamSayfa);
 
   embed.setDescription(
     'Aşağıda departman bünyesinde aktif olarak mazeretli olan kullanıcıları görebilirsiniz.\n\n' +
-      icerik.join('\n\n'),
+    sayfalar[p - 1].join('\n\n')
   );
 
   embed.setFooter({
@@ -283,7 +285,7 @@ function buildAktifPanelEmbed(rows = [], { page = 1, pageCount = 1, now = Date.n
       `Aktif: ${rows.length} kişi · Sayfa ${p}/${toplamSayfa} · ` +
       `Son güncelleme ${new Date(now).toLocaleString('tr-TR')}`,
   });
-  return { embed, toplamSayfa };
+  return { embed, toplamSayfa, sayfa: p };
 }
 
 /** Sayfalama butonları (tek sayfada ise boş döner). */

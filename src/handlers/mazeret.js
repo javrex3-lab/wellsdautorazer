@@ -188,19 +188,22 @@ async function handleSebepSubmit(interaction) {
       return safeReply(interaction, buildErrorEmbed(msg));
     }
 
-    // Kayıt GERÇEKTEN oluştu → onay ver
-    await interaction
-      .reply({
-        embeds: [buildKayitOnayEmbed({ rec: res.record, sureLabel: sure.label })],
-        flags: MessageFlags.Ephemeral,
-      })
-      .catch(() => {});
+    /* --- Kayıt GERÇEKTEN oluştu (res.ok === true). --- */
+    /* 1) Aktif kayıtlar kalıcı depodan yeniden okunur, merkezi panel güncellenir. */
+    const panelOk = await refreshMerkeziPanel(interaction.client, interaction.guildId, 1);
 
-    // Merkezi paneli güncelle
-    await refreshMerkeziPanel(interaction.client, interaction.guildId, 1);
+    /* 2) Kullanıcıya onay. Panel güncellenemediyse hata GİZLENMEZ, açıkça bildirilir. */
+    const onay = buildKayitOnayEmbed({ rec: res.record, sureLabel: sure.label });
+    if (!panelOk) {
+      onay.setFooter({
+        text: 'Kaydın kaydedildi ancak merkezi liste paneli şu an güncellenemedi. Yetkililere bildirin.',
+      });
+      logger.error(`[mazeret] kayıt tamam ama merkezi panel güncellenemedi (guild ${interaction.guildId})`);
+    }
+    await interaction.reply({ embeds: [onay], flags: MessageFlags.Ephemeral }).catch(() => {});
 
     logger.success(
-      `Mazeret kaydedildi: ${interaction.user.tag} · ${sure.label} · bitiş ${new Date(res.record.expires_at).toLocaleString('tr-TR')}`,
+      `Mazeret kaydedildi: ${interaction.user.tag} · ${sure.label} · bitiş ${new Date(res.record.expires_at).toLocaleString('tr-TR')} · panel=${panelOk ? 'güncellendi' : 'GÜNCELLENEMEDİ'}`,
     );
   } catch (err) {
     logger.error('Interaction failed: mazeret submit.', err);
@@ -224,56 +227,115 @@ async function handleSebepSubmit(interaction) {
  * (kanal spam olmaz); silinmişse yenisini gönderir ve kaydeder.
  * @returns {Promise<boolean>}
  */
+/**
+ * Guild basina kilit: ayni anda iki handler calisirsa ikisi de "yeni mesaj"
+ * gormez, siraya girer → duplicate panel OLUSMAZ.
+ * @type {Map<string, Promise>}
+ */
+const panelKilit = new Map();
+
+/** Kanal bu sunucuya ait mi ve bot gönderip düzenleyebilir mi? */
+function kanalUygunMu(channel, guild) {
+  if (!channel?.isTextBased?.() || channel.isDMBased?.()) return { ok: false, neden: 'kanal_bulunamadi' };
+  if (channel.guildId && guild?.id && String(channel.guildId) !== String(guild.id)) {
+    return { ok: false, neden: 'yanlis_sunucu' };
+  }
+  const me = guild?.members?.me;
+  if (me) {
+    const p = channel.permissionsFor?.(me);
+    if (!p?.has(PermissionFlagsBits.SendMessages) || !p?.has(PermissionFlagsBits.EmbedLinks)) {
+      return { ok: false, neden: 'yetki_yok' };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Merkezi aktif-liste panelini oluşturur/günceller.
+ * Mesaj kayıtlıysa DÜZENLER (kanal spam olmaz); silinmişse yenisini gönderir
+ * ve yeni ID'yi kaydeder. Hata olursa KAYIT YARATMADAN yeniden dener.
+ * @returns {Promise<boolean>}
+ */
 async function refreshMerkeziPanel(client, guildId, page = 1) {
+  const onceki = panelKilit.get(guildId) || Promise.resolve();
+  const is = onceki
+    .catch(() => {})
+    .then(() => _refreshMerkeziPanel(client, guildId, page));
+  panelKilit.set(guildId, is);
+  is.finally(() => {
+    if (panelKilit.get(guildId) === is) panelKilit.delete(guildId);
+  });
+  return is;
+}
+
+async function _refreshMerkeziPanel(client, guildId, page = 1) {
   const chId = merkeziKanalId();
-  if (!chId || !client || !guildId) return false;
-
-  try {
-    const channel = await client.channels.fetch(chId).catch(() => null);
-    if (!channel?.isTextBased?.() || channel.isDMBased?.()) {
-      logger.warn(`Mazeret merkezi kanalı bulunamadı/uygun değil: ${chId}`);
-      return false;
-    }
-
-    // Süresi dolmuşları kapat + yalnızca HÂLÂ GEÇERLİ kayıtları oku
-    expireMazerets(guildId);
-    const rows = getActiveMazerets(guildId);
-
-    // Sayfa sayısını önce hesapla (boş listede 1)
-    const probe = buildAktifPanelEmbed(rows, { page: 1, pageCount: 1, now: Date.now() });
-    const toplamSayfa = probe.toplamSayfa;
-    const p = Math.min(Math.max(1, Number(page) || 1), toplamSayfa);
-
-    const { embed } = buildAktifPanelEmbed(rows, { page: p, pageCount: toplamSayfa, now: Date.now() });
-    const pag = buildSayfalamaRow(p, toplamSayfa);
-    const components = pag ? [pag] : [];
-
-    const kayit = getMazeretActivePanel(guildId, 'central');
-    let mesaj = null;
-    if (kayit) {
-      mesaj = await channel.messages.fetch(kayit.message_id).catch(() => null);
-      if (!mesaj) deleteMazeretActivePanel(guildId, 'central');
-    }
-
-    if (mesaj) {
-      try {
-        await mesaj.edit({ embeds: [embed], components });
-      } catch (err) {
-        if (err?.code === 10008) mesaj = null;
-        else throw err;
-      }
-    }
-
-    if (!mesaj) {
-      mesaj = await channel.send({ embeds: [embed], components });
-      upsertMazeretActivePanel(guildId, 'central', channel.id, mesaj.id);
-      logger.info(`Mazeret merkezi paneli oluşturuldu: <#${channel.id}> (${mesaj.id}) — ${rows.length} aktif kayıt`);
-    }
-    return true;
-  } catch (err) {
-    logger.error(`Mazeret merkezi paneli güncellenemedi (guild ${guildId}):`, err);
+  if (!chId || !client || !guildId) {
+    logger.warn(`[mazeret] merkezi kanal/istemci/guild eksik — panel güncellenemiyor (chId=${chId || 'yok'})`);
     return false;
   }
+
+  const guild = client.guilds?.cache?.get?.(guildId) || null;
+
+  // 3 deneme: kayıt oluşturmaz, sadece paneli tazelemeye çalışır.
+  for (let deneme = 1; deneme <= 3; deneme++) {
+    try {
+      const channel = await client.channels.fetch(chId).catch(() => null);
+      const uygun = kanalUygunMu(channel, guild);
+      if (!uygun.ok) {
+        logger.error(`[mazeret] merkezi kanal kullanılamaz (${uygun.neden}): ${chId}`);
+        return false;
+      }
+
+      // Süresi dolmuşları kapat + yalnızca HÂLÂ GEÇERLİ kayıtları oku.
+      // expires_at kalıcı zaman damgasıdır → restart/redeploy etkisi yoktur.
+      expireMazerets(guildId);
+      const rows = getActiveMazerets(guildId);
+
+      const probe = buildAktifPanelEmbed(rows, { page: 1, now: Date.now() });
+      const toplamSayfa = probe.toplamSayfa;
+      const p = Math.min(Math.max(1, Number(page) || 1), toplamSayfa);
+      const { embed } = buildAktifPanelEmbed(rows, { page: p, now: Date.now() });
+      const pag = buildSayfalamaRow(p, toplamSayfa);
+
+      const kayit = getMazeretActivePanel(guildId, 'central');
+      let mesaj = null;
+      if (kayit && kayit.channel_id === channel.id) {
+        mesaj = await channel.messages.fetch(kayit.message_id).catch(() => null);
+        if (!mesaj) {
+          deleteMazeretActivePanel(guildId, 'central');
+          logger.warn(`[mazeret] kayıtlı panel mesajı bulunamadı (silinmiş), yenisi oluşturulacak: ${kayit.message_id}`);
+        }
+      }
+
+      if (mesaj) {
+        try {
+          await mesaj.edit({ embeds: [embed], components: pag ? [pag] : [] });
+          return true;
+        } catch (err) {
+          if (err?.code === 10008 || err?.code === 40060) {
+            deleteMazeretActivePanel(guildId, 'central');
+            mesaj = null;
+          } else if (deneme < 3) {
+            logger.warn(`[mazeret] panel düzenlenemedi (${deneme}/3): ${err.code || err.message}`);
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      // Mesaj yok → bir kez oluştur ve ID'yi kalıcı sakla
+      const yeni = await channel.send({ embeds: [embed], components: pag ? [pag] : [] });
+      upsertMazeretActivePanel(guildId, 'central', channel.id, yeni.id);
+      logger.info(`Mazeret merkezi paneli oluşturuldu: <#${channel.id}> (${yeni.id}) — ${rows.length} aktif kayıt`);
+      return true;
+    } catch (err) {
+      logger.error(`[mazeret] merkezi panel güncellenemedi (guild ${guildId}, deneme ${deneme}/3): ${err.code || err.message}`);
+      if (deneme >= 3) return false;
+      await new Promise((r) => setTimeout(r, 400 * deneme));
+    }
+  }
+  return false;
 }
 
 /* ================================================================== */
@@ -400,4 +462,5 @@ module.exports = {
   sureAyarla,
   _beklemedekiSure: beklemedekiSure,
   _isleniyor: isleniyor,
+  _panelKilit: panelKilit,
 };

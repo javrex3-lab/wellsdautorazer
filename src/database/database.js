@@ -111,6 +111,49 @@ function migrate(database) {
       /* sütun zaten varsa hata verir — normal, geç */
     }
   }
+
+  /* ------------------------------------------------------------------ */
+  /* MAZERET GÖÇÜ — kritik                                             */
+  /* ------------------------------------------------------------------ */
+  // `CREATE TABLE IF NOT EXISTS` MEVCUT tabloyu değiştirmez. Eski mazeret
+  // sisteminden kalmış `mazeret_records` tablosunda `started_at` sütunu
+  // YOKTUR ve INSERT'ler sessizce başarısız olur → kayıt hiç saklanmaz →
+  // aktif mazeretliler paneli hep boş kalır. Aşağıdaki ALTER ile geriye
+  // dönük uyumlu hale getiriyoruz.
+  try {
+    const cols = database.prepare('PRAGMA table_info(mazeret_records)').all().map((c) => c.name);
+    if (!cols.length) {
+      logger.warn('[DB] mazeret_records tablosu yok (SCHEMA çalışmamış?) — migrate atlanıyor.');
+    } else {
+      if (!cols.includes('started_at')) {
+        database.exec('ALTER TABLE mazeret_records ADD COLUMN started_at INTEGER');
+        // Eski kayıtlara başlangıç zamanı = kayıt oluşturma zamanı
+        database.exec('UPDATE mazeret_records SET started_at = created_at WHERE started_at IS NULL OR started_at = 0');
+        logger.warn('[DB] Mazeret göçü: started_at sütunu eklendi ve eski kayıtlar dolduruldu.');
+      }
+      // Aktif kayıtların başlangıç zamanı boşsa güvenli tamamla
+      database.exec('UPDATE mazeret_records SET started_at = created_at WHERE started_at IS NULL OR started_at = 0');
+      database.exec('UPDATE mazeret_records SET started_at = expires_at - duration_ms WHERE started_at > expires_at');
+
+      // Tek-aktif kısıtı (eş zamanlı bildirimlerde duplicate kaydı engeller)
+      const idx = database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_mazeret_one_active'").get();
+      if (!idx) {
+        database.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_mazeret_one_active ON mazeret_records (guild_id, user_id) WHERE active = 1');
+        logger.warn('[DB] Mazeret: tek-aktif benzersiz indexi oluşturuldu.');
+      }
+
+      // Doğrulama — kayıt gerçekten yazılabiliyor mu?
+      const son = database.prepare('SELECT COUNT(*) AS c FROM mazeret_records WHERE started_at IS NULL OR started_at = 0').get();
+      if (Number(son?.c || 0) > 0) {
+        logger.error(`[DB] Mazeret göçü SONRASI ${son.c} kayıtta started_at hâlâ boş!`);
+      } else {
+        logger.db('Mazeret şeması hazır (started_at mevcut, tek-aktif kısıtı var).');
+      }
+    }
+  } catch (err) {
+    // Göç hatası GİZLENMEZ — kayıtların neden yazılamadığı bilinmelidir.
+    logger.error('[DB] Mazeret göçü BAŞARISIZ — yeni mazeret kayıtları kaydedilemeyebilir:', err);
+  }
 }
 
 function getDb() {

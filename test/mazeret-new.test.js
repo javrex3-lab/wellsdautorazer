@@ -159,7 +159,7 @@ section('7) AKTIF PANEL EMBEDI + SAYFALAMA');
 
 {
   const bos = views.buildAktifPanelEmbed([], { page: 1, now: Date.now() });
-  check('Bos liste -> "bulunmuyor"', bos.embed.data.description.includes('bulunmuyor'), bos.embed.data.description);
+  check('Bos tam mesaj metni', bos.embed.data.description.includes('Şu anda aktif mazeretli kullanıcı bulunmuyor.'), bos.embed.data.description);
   check('Bos listede toplamSayfa = 1', bos.toplamSayfa === 1, String(bos.toplamSayfa));
 
   const simdi = Date.now();
@@ -182,10 +182,10 @@ section('7) AKTIF PANEL EMBEDI + SAYFALAMA');
     'Istenen aciklama metni',
     tek.embed.data.description.includes('Aşağıda departman bünyesinde aktif olarak mazeretli olan kullanıcıları görebilirsiniz'),
   );
-  for (const alan of ['**Süre:**', '**Başlangıç:**', '**Bitiş:**', '**Sebep:**', '**Durum:**']) {
+  for (const alan of ['**Süre:**', '**Bitiş:**', '**Sebep:**']) {
     check('Alan mevcut: ' + alan, tek.embed.data.description.includes(alan));
   }
-  check('Aktif durum etiketi', tek.embed.data.description.includes('Aktif'));
+  check('Numaralandirma etiketi var', /\*\*\d+\)/.test(tek.embed.data.description), tek.embed.data.description.slice(0, 60));
   check('Discord timestamp kullaniliyor', /<t:\d+:/.test(tek.embed.data.description));
   check('Mention kullaniliyor', tek.embed.data.description.includes('<@'));
   check('Aciklama 4096 siniri icinde', tek.embed.data.description.length <= 4096, String(tek.embed.data.description.length));
