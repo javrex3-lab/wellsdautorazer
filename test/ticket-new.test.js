@@ -485,9 +485,10 @@ const guildYap = (cat) => ({
   );
 
   // NOT: claimTicket artik var — yeni sahiplenme ozelliginin DB fonksiyonudur.
-    for (const f of ['createTicket', 'closeTicket', 'deleteTicket', 'getAllTickets', 'setTicketPanelMessage']) {
+    for (const f of ['createTicket', 'closeTicket', 'deleteTicket', 'getAllTickets']) {
     check('DB artık export etmiyor: ' + f, typeof db[f] !== 'function');
   }
+    check('DB export ediyor: setTicketPanelMessage (sahiplenince panel güncellenir)', typeof db.setTicketPanelMessage === 'function');
   {
     check(
       'DB export ediyor: claimTicket (sahiplenme ozelligi)',

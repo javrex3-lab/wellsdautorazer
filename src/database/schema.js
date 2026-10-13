@@ -195,6 +195,10 @@ CREATE TABLE IF NOT EXISTS ticket_sessions (
   actor_id    TEXT,
   claimed_by   TEXT,          -- ticket i sahiplenen yetkili (tek kisi, bir kez)
   claimed_at   INTEGER,       -- sahiplenme zamani (ms)
+  -- Ticket kanalındaki karşılama mesajının kimliği. Sahiplenme sonrası
+  -- panelin yeniden çizilmesi buna bağlıdır; olmazsa fetch(undefined)
+  -- hata verir ve panel "Yetkili bekleniyor" yazmaya devam eder.
+  panel_message_id TEXT,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
   closed_at   INTEGER

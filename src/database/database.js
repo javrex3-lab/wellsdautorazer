@@ -126,6 +126,8 @@ function migrate(database) {
       let eklendi = false;
       if (!tCols.includes('claimed_by')) { database.exec('ALTER TABLE ticket_sessions ADD COLUMN claimed_by TEXT'); eklendi = true; }
       if (!tCols.includes('claimed_at')) { database.exec('ALTER TABLE ticket_sessions ADD COLUMN claimed_at INTEGER'); eklendi = true; }
+      // Panel mesajının kimliği olmazsa sahiplenince panel yeniden çizilemez.
+      if (!tCols.includes('panel_message_id')) { database.exec('ALTER TABLE ticket_sessions ADD COLUMN panel_message_id TEXT'); eklendi = true; }
       if (eklendi) {
         database.exec('CREATE INDEX IF NOT EXISTS idx_ts_claimed ON ticket_sessions (guild_id, claimed_by)');
         logger.warn('[DB] Ticket gocu: claimed_by / claimed_at sutunlari eklendi.');
@@ -758,6 +760,7 @@ module.exports = {
   // --- YENİ TICKET SİSTEMİ ---
   createTicketSession,
   setTicketChannel,
+  setTicketPanelMessage,
   getTicketByChannel,
   getOpenTicketByUser,
   setTicketStatus,
@@ -934,6 +937,26 @@ function setTicketChannel(id, channelId) {
     return true;
   } catch (err) {
     logger.error(`[DB] setTicketChannel failed: ${id}`, err);
+    return false;
+  }
+}
+
+/**
+ * Ticket kanalındaki karşılama mesajının kimliğini yazar.
+ * Sahiplenme sonrası panelin yeniden çizilmesi buna bağlıdır.
+ * @param {number|string} id ticket oturumu kimliği
+ * @param {string} messageId Discord mesaj kimliği
+ * @returns {boolean}
+ */
+function setTicketPanelMessage(id, messageId) {
+  try {
+    if (!messageId) return false;
+    getDb()
+      .prepare('UPDATE ticket_sessions SET panel_message_id = ?, updated_at = ? WHERE id = ?')
+      .run(String(messageId), Date.now(), Number(id));
+    return true;
+  } catch (err) {
+    logger.error(`[DB] setTicketPanelMessage failed: ${id}`, err);
     return false;
   }
 }

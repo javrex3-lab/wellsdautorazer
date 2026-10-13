@@ -101,7 +101,7 @@ console.log('='.repeat(70));
   bolum('3) DURUM METNİ');
 
   check('Açık + sahiplenilmemiş', views.durumMetni({ status: 'open' }) === 'Yetkili bekleniyor...', views.durumMetni({ status: 'open' }));
-  check('Açık + sahiplenilmiş (yetkili adı)', views.durumMetni({ status: 'open', claimedBy: STAFF }) === `<@${STAFF}> talebinizi inceliyor.`);
+  check('Açık + sahiplenilmiş: "Yetkili sahiplendi: <@id>"', views.durumMetni({ status: 'open', claimedBy: STAFF }) === `Yetkili sahiplendi: <@${STAFF}>`, views.durumMetni({ status: 'open', claimedBy: STAFF }));
   check('Kabul edilmiş', views.durumMetni({ status: 'accepted' }) === 'Talebiniz kabul edildi. 🎉');
   check('Reddedilmiş', views.durumMetni({ status: 'rejected' }) === 'Talebiniz reddedildi.');
   check('Kapatılmış', views.durumMetni({ status: 'closed' }) === 'Bu ticket kapatıldı.');

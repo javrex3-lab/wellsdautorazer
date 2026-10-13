@@ -258,7 +258,7 @@ check('Kapalı ticket: kapatma butonları yok', !k.includes('tk_kapat_yetkili') 
     const ort2 = ticketKanal(t.id);
     const itA2 = butonEtkilesimi({ channelId: t.channel_id, channel: ort2.kanal, userId: STAFF_A, staff: true });
     await tickets.handleTicketButton(itA2);
-    check('7) Tekrar basışta "zaten tarafınızca" mesajı', JSON.stringify(yanit(itA2)).includes('zaten tarafınızca'), JSON.stringify(yanit(itA2)).slice(0, 200));
+    check('7) Tekrar basışta "zaten senin tarafından" mesajı', JSON.stringify(yanit(itA2)).includes('zaten senin tarafından'), JSON.stringify(yanit(itA2)).slice(0, 200));
     check('7) İstatistik ARTIRILMADI (1 kaldı)', db.getTicketClaimCount(G, STAFF_A) === 1, String(db.getTicketClaimCount(G, STAFF_A)));
     check('7) Kanal mesajı tekrar gönderilmedi', ort2.gonderilen.length === 0, String(ort2.gonderilen.length));
   }

@@ -40,6 +40,7 @@ const {
   getOpenTicketByUser,
   getSetting,
   setTicketChannel,
+  setTicketPanelMessage,
   setTicketStatus,
   endTicketSession,
   upsertTicketPanel,
@@ -427,7 +428,7 @@ async function handleOpenButton(interaction, kind) {
   const allowedMentions = { users: [interaction.user.id], ...(pingRole ? { roles: [pingRole] } : {}) };
 
   try {
-    await channel.send({
+    const karsilamaMesaji = await channel.send({
       content,
       allowedMentions,
       embeds: [
@@ -444,6 +445,15 @@ async function handleOpenButton(interaction, kind) {
       ],
       components: buildTicketRows(kind, 'open'),
     });
+    // Karşılama mesajının kimliği KAYDEDİLMEZSE sahiplenince panel yeniden
+    // çizilemez ve "Yetkili bekleniyor" yazmaya devam eder.
+    if (karsilamaMesaji?.id) {
+      if (!setTicketPanelMessage(ticket.id, karsilamaMesaji.id)) {
+        // Yazılamadıysa sessizce geçme: sahiplenmede panel güncellenemeyecek.
+        logger.warn(`Ticket #${ticket.id}: panel mesajı kimliği kaydedilemedi — sahiplenince panel güncellenmeyecek.`);
+      }
+    }
+
   } catch (err) {
     await channel.delete('karşılama mesajı gönderilemedi').catch(() => {});
     endTicketSession(ticket.id, { reason: 'welcome_failed' });
@@ -719,8 +729,8 @@ async function handleSahiplen(interaction) {
       return safeEdit(interaction, {
         content:
           sahip && sahip !== String(interaction.user.id)
-            ? `🙋 Bu ticket zaten <@${sahip}> tarafından sahiplenmiş. Her ticket'in tek sahibi olur.`
-            : '🙋 Bu ticket zaten tarafınızca sahiplenmiş. İstatistik tekrar artırılmadı.',
+            ? `Bu ticket zaten sahiplenildi. Sahibi: <@${sahip}>. Her ticket’in tek sahibi olur.`
+            : '✅ Bu ticket zaten senin tarafından sahiplenildi. İstatistik tekrar artırılmadı.',
         embeds: sahip
           ? [
               buildSahiplenmeEmbed({

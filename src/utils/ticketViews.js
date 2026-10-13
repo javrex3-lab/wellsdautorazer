@@ -141,7 +141,7 @@ const AYRA = '\n─────────────────────�
 
 /**
  * Durum metni — "Destek Durumu" kutusunda gösterilir.
- * Sahiplenildiyse yetkili adı yazılır; hiçbir zaman tahmin edilmez.
+ * Sahiplenildiyse "Yetkili sahiplendi: <@id>" yazar; kim olduğu ASLA tahmin edilmez.
  * @param {{status:string, claimedBy?:string|null}} p
  * @returns {string}
  */
@@ -149,7 +149,7 @@ function durumMetni(p) {
   if (p.status === 'closed') return 'Bu ticket kapatıldı.';
   if (p.status === 'rejected') return 'Talebiniz reddedildi.';
   if (p.status === 'accepted') return 'Talebiniz kabul edildi. 🎉';
-  if (p.claimedBy) return `<@${p.claimedBy}> talebinizi inceliyor.`;
+  if (p.claimedBy) return `Yetkili sahiplendi: <@${p.claimedBy}>`;
   return 'Yetkili bekleniyor...';
 }
 
