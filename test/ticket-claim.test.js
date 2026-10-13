@@ -431,7 +431,17 @@ function ac(kind, ownerId) {
     check('Kapat butonu view\'da', views.CID.KAPAT === 'tk_kapat');
     check('Panel customId\'leri değişmedi', views.CID.OPEN_BASVURU === 'tk_ac_basvuru' && views.CID.OPEN_SIKAYET === 'tk_ac_sikayet' && views.CID.OPEN_DIGER === 'tk_ac_diger');
     check('OPEN_KIND eşlemesi bozulmadı', views.OPEN_KIND[views.CID.OPEN_BASVURU] === 'basvuru' && views.OPEN_KIND[views.CID.OPEN_DIGER] === 'diger');
-    check('Ana panel 3 buton (değişmedi)', dugmeler(views.buildMainPanelRow()).length === 3);
+    // Panel artık 3 buton değil, 1 adet kategori seçim menüsü taşıyor.
+    {
+      const menuSatiri = views.buildMainPanelRows()[0].toJSON().components[0];
+      check('Ana panel kategori seçim menüsü (buton değil)', menuSatiri.type === 3, 'tip: ' + menuSatiri.type);
+      check('Menüde 3 kategori seçeneği', menuSatiri.options.length === 3, 'bulunan: ' + menuSatiri.options.length);
+      check('Menü customId: tk_ac_kategori', menuSatiri.custom_id === 'tk_ac_kategori', menuSatiri.custom_id);
+    }
+    // Geriye uyumluluk: HENÜZ güncellenmemiş eski panel mesajlarındaki butonlar çalışmaya devam eder.
+    check('Eski panel butonları hâlâ yönlendiriliyor', Object.keys(views.OPEN_KIND).length === 3);
+    check('Dropdown yönlendiricisi export edildi', typeof tickets.handleKategoriSelect === 'function');
+
     check('handleOpenButton mevcut', typeof tickets.handleOpenButton === 'function');
     check('handleTicketButton mevcut', typeof tickets.handleTicketButton === 'function');
     check('handleSahiplen export edildi', typeof tickets.handleSahiplen === 'function');

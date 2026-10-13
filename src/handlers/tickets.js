@@ -62,12 +62,34 @@ const silmeZamanlayici = new Map();
 /* ================================================================== */
 
 /**
+ * Panele özgü sunucu bağlamı: sağ üst arma (thumbnail) ve "Kurallar" bağlantısı.
+ * Sunucu arması CDN adresidir (embed.thumbnail) — mesaja dosya yüklenmez.
+ * @param {Guild} guild
+ * @returns {{iconUrl:string|null, rulesUrl:string|null}}
+ */
+function panelEkleri(guild) {
+  let iconUrl = null;
+  try {
+    if (typeof guild.iconURL === 'function') iconUrl = guild.iconURL({ extension: 'png', size: 512 }) || null;
+  } catch (err) {
+    logger.warn(`Panel arması alınamadı: ${err.code || err.message}`);
+  }
+
+  // Kural kanalı sunucuya özeldir; adres guild+kanal kimliğinden ÜRETİLİR (sabit yazılmaz).
+  const kanalId = (config.ticket.rulesChannelId || '').trim();
+  const rulesUrl = /^\d{17,20}$/.test(kanalId) ? `https://discord.com/channels/${guild.id}/${kanalId}` : null;
+
+  return { iconUrl, rulesUrl };
+}
+
+/**
  * Ana paneli gönderir.
  * @param {Client} client
  * @param {Guild} guild
  * @param {ObjectChannel} kanal
  * @returns {Promise<{ok:boolean, action:string, messageId?:string}>}
  */
+
 async function sendMainPanel(client, guild, kanal) {
   const res = { ok: false, action: 'bilinmiyor', gorsel: 'yok' };
   try {
@@ -80,11 +102,14 @@ async function sendMainPanel(client, guild, kanal) {
       if (mevcut) {
         // Düzenlemede dosya EKLENEMEZ; o mesajın kendi görseli korunur.
         const mevcutUrl = mevcut.embeds?.[0]?.image?.url || null;
-        const { embed, row } = buildMainPanel({
+        const { iconUrl, rulesUrl } = panelEkleri(guild);
+        const { embed, rows } = buildMainPanel({
           guildName: guild.name,
           imageUrl: gorsel.kaynak === 'url' ? gorsel.url : mevcutUrl,
+          iconUrl,
+          rulesUrl,
         });
-        await mevcut.edit({ embeds: [embed], components: [row] });
+        await mevcut.edit({ embeds: [embed], components: rows });
         res.gorsel = embed.data.image?.url ? 'korundu' : 'yok';
         res.ok = true;
         res.action = 'guncellendi';
@@ -99,17 +124,21 @@ async function sendMainPanel(client, guild, kanal) {
     const files = [];
     if (gorsel.kaynak === 'dosya') {
       imageUrl = `attachment://${PANEL_GORSEL_ADI}`;
-      files.push(fs.createReadStream(gorsel.yol));
+      // Ad AÇIKÇA verilir: ham ReadStream'de discord.js dosya adını YOLUN
+        // BASENAME'inden üretir ve bu ad attachment:// ile örtüşmezse görsel
+        // embed içinde GÖRÜNMEZ (panelImage.js ile aynı ders).
+        files.push({ attachment: fs.createReadStream(gorsel.yol), name: PANEL_GORSEL_ADI });
       res.gorsel = 'dosya (mesaja ekleniyor)';
     } else if (gorsel.kaynak === 'url') {
       imageUrl = gorsel.url;
       res.gorsel = 'url';
     }
 
-    const { embed, row } = buildMainPanel({ guildName: guild.name, imageUrl });
+    const { iconUrl, rulesUrl } = panelEkleri(guild);
+    const { embed, rows } = buildMainPanel({ guildName: guild.name, imageUrl, iconUrl, rulesUrl });
     const msg = await kanal.send({
       embeds: [embed],
-      components: [row],
+      components: rows,
       ...(files.length ? { files } : {}),
     });
     upsertTicketPanel(guild.id, kanal.id, msg.id);
@@ -229,6 +258,39 @@ const KATEGORI_HATASI = {
  * @param {Interaction} interaction
  * @param {'basvuru'|'sikayet'|'diger'} kind
  */
+/**
+ * Ana paneldeki kategori seçim menüsü → ticket kanalı oluştur.
+ * Menü `value` alanı doğrudan ticket türüdür; butonlarla aynı akışa girer.
+ * @param {Interaction} interaction
+ */
+async function handleKategoriSelect(interaction) {
+  const value = Array.isArray(interaction.values) ? interaction.values[0] : null;
+
+  if (!value) {
+    logger.warn('Kategori seçimi boş geldi — ticket açılmadı.');
+    return true;
+  }
+
+  if (!isKnownKind(value)) {
+    // Bilinmeyen değer ASLA sessizce yutulmaz: loglanır ve kullanıcıya bildirilir.
+    logger.warn(`Geçersiz kategori değeri: ${String(value).slice(0, 40)}`);
+    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+      await interaction
+        .reply({ embeds: [buildErrorEmbed('Geçersiz kategori seçimi.')], flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
+    return true;
+  }
+
+  return handleOpenButton(interaction, value);
+}
+
+/**
+ * Panel butonu → ticket kanalı oluştur.
+ * @param {Interaction} interaction
+ * @param {'basvuru'|'sikayet'|'diger'} kind
+ */
+
 async function handleOpenButton(interaction, kind) {
   const guild = interaction.guild;
   if (!guild) return true;
@@ -791,7 +853,9 @@ module.exports = {
   isKnownKind,
   sendMainPanel,
   resolveTicketCategory,
-  handleOpenButton,
+    handleOpenButton,
+  handleKategoriSelect,
+  panelEkleri,
   handleTicketButton,
   handleSahiplen,
   _silmeZamanlayici: silmeZamanlayici,

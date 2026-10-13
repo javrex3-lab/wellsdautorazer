@@ -4,7 +4,13 @@
  * ESKİ `src/utils/ticketEmbeds.js` silindi; bu dosya onun yerine geçer.
  * Panelde SADECE 3 seçenek vardır: 📝 Başvuru / 📢 Şikayet / 📩 Diğer.
  */
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const {
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+} = require('discord.js');
 const config = require('../config');
 
 /** Tüm ticket butonlarının customId'leri tek yerden. */
@@ -15,7 +21,9 @@ const CID = {
   KABUL: 'tk_kabul',
   REDDET: 'tk_reddet',
   KAPAT: 'tk_kapat',
-  SAHIPLEN: 'tk_sahiplen',
+    SAHIPLEN: 'tk_sahiplen',
+  // Ana paneldeki kategori secim menusu (dropdown).
+  AC_KATEGORI: 'tk_ac_kategori',
 };
 
 /** Panel butonlarının customId → ticket türü eşlemesi. */
@@ -31,6 +39,13 @@ const KIND = {
   sikayet: { label: 'Şikayet', emoji: '📢', color: 0xe67e22, onaylanabilir: false },
   diger: { label: 'Diğer', emoji: '📩', color: 0x9b59b6, onaylanabilir: false },
 };
+
+/** Paneldeki kategori seçim menüsü seçenekleri. `value` doğrudan ticket türüdür. */
+const KATEGORI_SECENEKLERI = [
+  { value: 'basvuru', label: 'Başvuru', emoji: '📝', description: 'Sunucuya başvurmak / üyelik için' },
+  { value: 'sikayet', label: 'Şikayet', emoji: '📢', description: 'Sorun, haksızlık veya şikâyet bildirmek için' },
+  { value: 'diger', label: 'Diğer', emoji: '📩', description: 'Yukarıdakiler dışındaki her konu için' },
+];
 
 const isKnownKind = (k) => Object.prototype.hasOwnProperty.call(KIND, k);
 
@@ -50,46 +65,67 @@ function safe(text, max) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Ana panel. Tek mesajda üç seçenek (buton olarak).
- * @param {{ guildName?: string, imageUrl?: string|null }} opts
+ * Ana panel — iki satır: "Kurallar" bağlantısı + kategori seçim menüsü.
+ * (Eski 3 butonlu düzen örnek görsele göre seçim menüsüne çevrildi.)
+ *
+ * @param {{guildName?:string|null, imageUrl?:string|null, iconUrl?:string|null, rulesUrl?:string|null}} opts
+ * @returns {{embed: EmbedBuilder, rows: ActionRowBuilder[]}}
  */
-function buildMainPanel({ guildName = null, imageUrl = null } = {}) {
+function buildMainPanel({ guildName = null, imageUrl = null, iconUrl = null, rulesUrl = null } = {}) {
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
-    .setTitle('🎫 Ticket Sistemi')
+    .setTitle(`📌 ${guildName || 'Ticket Sistemi'}`)
     .setDescription(
-      'Merhaba! Destek, başvuru veya görüşmek istediğin bir konu için ' +
-        'aşağıdaki seçeneklerden birini seçerek ticket açabilirsin.\n\n' +
-        '**📝 Başvuru** — Sunucuya başvurmak / üyelik için\n' +
-        '**📢 Şikayet** — Bir sorun, haksızlık veya şikâyet bildirmek için\n' +
-        '**📩 Diğer** — Yukarıdakiler dışındaki her konu için',
+      '✦ **Ticket Sistemi Hakkında:**\n' +
+        'Aşağıdaki seçeneklerden uygun olanı seçerek hemen bir ticket oluşturabilirsiniz.\n\n' +
+        '👉 **Bildiğiniz:**\n' +
+        '⚠️ Sunucu kurallarımızı okumayı unutmayınız!',
     );
 
-  if (imageUrl) embed.setImage(imageUrl);
-  if (guildName) embed.setFooter({ text: guildName });
+  // Sağ üstte sunucu arması (örnek düzende olduğu gibi).
+  if (iconUrl) embed.setThumbnail(iconUrl);
 
-  return { embed, row: buildMainPanelRow() };
+  // Banner embed’in İÇİNDE; mesaja attachment olarak eklenir.
+  if (imageUrl) embed.setImage(imageUrl);
+
+  return { embed, rows: buildMainPanelRows({ rulesUrl }) };
 }
 
-/** Ana panel buton satırı: tam olarak 3 buton. */
-function buildMainPanelRow() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(CID.OPEN_BASVURU)
-      .setLabel('Başvuru')
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji('📝'),
-    new ButtonBuilder()
-      .setCustomId(CID.OPEN_SIKAYET)
-      .setLabel('Şikayet')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('📢'),
-    new ButtonBuilder()
-      .setCustomId(CID.OPEN_DIGER)
-      .setLabel('Diğer')
-      .setStyle(ButtonStyle.Secondary)
-      .setEmoji('📩'),
+/**
+ * Panel bileşenleri: "Kurallar" linki (rulesUrl varsa) + kategori seçim menüsü.
+ * rulesUrl yoksa link satırı hiç eklenmez — menü her zaman ilk sıradadır.
+ *
+ * @param {{rulesUrl?:string|null}} opts
+ * @returns {ActionRowBuilder[]}
+ */
+function buildMainPanelRows({ rulesUrl = null } = {}) {
+  const rows = [];
+
+  if (rulesUrl) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setLabel('Kurallar').setStyle(ButtonStyle.Link).setURL(rulesUrl).setEmoji('📖'),
+      ),
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(CID.AC_KATEGORI)
+        .setPlaceholder('TICKET OLUŞTURMAK İÇİN KATEGORİ SEÇİNİZ')
+        .addOptions(
+          KATEGORI_SECENEKLERI.map((o) => ({
+            label: o.label,
+            value: o.value,
+            description: o.description,
+            emoji: o.emoji,
+          })),
+        ),
+    ),
   );
+
+  return rows;
 }
 
 /* ------------------------------------------------------------------ */
@@ -250,7 +286,8 @@ module.exports = {
   isKnownKind,
   kindOf,
   buildMainPanel,
-  buildMainPanelRow,
+    buildMainPanelRows,
+  KATEGORI_SECENEKLERI,
   buildTicketEmbed,
   buildTicketRow,
   buildSahiplenmeEmbed,

@@ -10,6 +10,7 @@ const { canManageGuard } = require('../guard/permissions');
 const { handleButton } = require('../handlers/buttonHandler');
 const mz = require('../handlers/mazeret');
 const ban = require('../handlers/banli');
+const tk = require('../handlers/tickets');
 const logger = require('../utils/logger');
 
 function labelOf(interaction) {
@@ -52,10 +53,13 @@ module.exports = {
       }
 
 
-      // --- Select menüleri (mazeret süre seçimi) ---
+      // --- Select menüleri (mazeret süre seçimi + ticket kategori seçimi) ---
       if (interaction.isAnySelectMenu && interaction.isAnySelectMenu()) {
         if (interaction.customId === mz.CID.SURE) {
           await mz.handleSureSelect(interaction);
+        } else if (interaction.customId === tk.CID.AC_KATEGORI) {
+          // Ana paneldeki kategori seçim menüsü → ticket açılışı.
+          await tk.handleKategoriSelect(interaction);
         } else {
           logger.warn(`Bilinmeyen select customId: ${interaction.customId}`);
           if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {

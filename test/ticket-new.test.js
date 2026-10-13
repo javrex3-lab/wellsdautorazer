@@ -39,31 +39,51 @@ console.log('  YENİ TICKET SİSTEMİ — TESTLER');
 console.log('='.repeat(66));
 
 /* ================================================================== */
-section('1) ANA PANEL — tam olarak 3 seçenek');
+section('1) ANA PANEL — kategori seçim menüsü + kurallar bağlantısı');
 
 const views = require('../src/utils/ticketViews');
-const row = views.buildMainPanelRow().toJSON().components;
-check('Panelde 3 buton var', row.length === 3, 'bulunan: ' + row.length);
-check(
-  'Butonlar: Başvuru / Şikayet / Diğer',
-  row.map((c) => c.label).join('|') === 'Başvuru|Şikayet|Diğer',
-  row.map((c) => c.label).join('|'),
-);
-check(
-  'customId: tk_ac_basvuru / tk_ac_sikayet / tk_ac_diger',
-  row.map((c) => c.custom_id).join('|') === 'tk_ac_basvuru|tk_ac_sikayet|tk_ac_diger',
-  row.map((c) => c.custom_id).join('|'),
-);
-check('Panel butonları OPEN_KIND ile türe eşleşiyor', row.every((c) => views.OPEN_KIND[c.custom_id]));
-check('Emoji: 📝 / 📢 / 📩', row.map((c) => c.emoji?.name).join('') === '\u{1F4DD}\u{1F4E2}\u{1F4E9}');
+const RULES_URL = 'https://discord.com/channels/1354465879311777893/1525548689064464567';
+const rows = views.buildMainPanelRows({ rulesUrl: RULES_URL }).map((r) => r.toJSON());
 
-const panel = views.buildMainPanel({ guildName: 'WELL SD' });
-check('Panel embed + buton satırı üretiliyor', !!panel.embed && !!panel.row);
-check('Panel embed başlığı', panel.embed.data.title.includes('Ticket'), panel.embed.data.title);
+check('Panel 2 satır: kurallar linki + seçim menüsü', rows.length === 2, 'bulunan: ' + rows.length);
+check('1. satır kurallar linki butonu', rows[0].components[0].type === 2 /* LinkButton */, 'tip: ' + rows[0].components[0].type);
+check('Kurallar butonu doğru adrese gidiyor', rows[0].components[0].url === RULES_URL, rows[0].components[0].url);
+check('2. satır StringSelectMenu (tip 3)', rows[1].components[0].type === 3, 'tip: ' + rows[1].components[0].type);
+check('Menü customId: tk_ac_kategori', rows[1].components[0].custom_id === 'tk_ac_kategori', rows[1].components[0].custom_id);
+check(
+  'Menü placeholder doğru',
+  rows[1].components[0].placeholder === 'TICKET OLUŞTURMAK İÇİN KATEGORİ SEÇİNİZ',
+  rows[1].components[0].placeholder,
+);
+
+const secenekler = rows[1].components[0].options || [];
+check('Menüde 3 seçenek', secenekler.length === 3, 'bulunan: ' + secenekler.length);
+check(
+  'Seçenek değerleri: basvuru|sikayet|diger',
+  secenekler.map((o) => o.value).join('|') === 'basvuru|sikayet|diger',
+  secenekler.map((o) => o.value).join('|'),
+);
+check(
+  'Her seçenek geçerli bir ticket türü',
+  secenekler.every((o) => views.isKnownKind(o.value)),
+  secenekler.map((o) => o.value).join('|'),
+);
+check('Emoji: 📝 / 📢 / 📩', secenekler.map((o) => o.emoji?.name).join('') === '\u{1F4DD}\u{1F4E2}\u{1F4E9}');
+
+check('rulesUrl verilmezse kurallar satırı hiç oluşmaz', views.buildMainPanelRows().length === 1);
+check('rulesUrl olmadan da menü var', views.buildMainPanelRows()[0].toJSON().components[0].type === 3);
+
+const panel = views.buildMainPanel({ guildName: 'WELL SD #V12', iconUrl: 'https://cdn/i.png', rulesUrl: RULES_URL });
+check('Panel embed + satır dizisi üretiliyor', !!panel.embed && Array.isArray(panel.rows) && panel.rows.length === 2);
+check('Panel başlığı sunucu adını içerir', panel.embed.data.title.includes('WELL SD #V12'), panel.embed.data.title);
+check('Sunucu arması sağ üstte (thumbnail)', panel.embed.data.thumbnail?.url === 'https://cdn/i.png', panel.embed.data.thumbnail?.url);
+check('Thumbnail verilmezse yok', !views.buildMainPanel({}).embed.data.thumbnail);
 check('Görsel verilince embed image alıyor', !!views.buildMainPanel({ imageUrl: 'https://x/y.png' }).embed.data.image?.url);
 check('Görsel verilmezse image yok', !panel.embed.data.image);
+check('Panel açıklaması kategori bilgisini verir', panel.embed.data.description.includes('kategori') || panel.embed.data.description.includes('seçeneklerden'));
+check('Panel açıklaması kural uyarısı içerir', panel.embed.data.description.includes('kurallarımızı'));
+check('Eski buton fonksiyonu kaldırıldı', views.buildMainPanelRow === undefined);
 
-/* ================================================================== */
 section('2) TICKET KANALI BUTONLARI');
 
 const btn = (kind, st) => views.buildTicketRow(kind, st || 'open').toJSON().components;
@@ -743,7 +763,12 @@ const guildYap = (cat) => ({
       gonderilen[0].embeds[0].data.image?.url,
     );
     check('Panel kaydı DBye yazıldı', db.getTicketPanel(G)?.message_id === '999000000000009900');
-    check('Butonlar panel mesajında', gonderilen[0].components[0].toJSON().components.length === 3);
+    check(
+      'Panel mesajında kategori seçim menüsü var',
+      gonderilen[0].components.length === 2 &&
+        gonderilen[0].components[1].toJSON().components[0].custom_id === 'tk_ac_kategori',
+      JSON.stringify(gonderilen[0].components.map((c) => c.toJSON().components[0].custom_id)),
+    );
 
     // sendMainPanel tekrar -> duplicate YOK, mevcut güncellenir (görsel korunur)
     const editCagrisi = [];
@@ -760,6 +785,11 @@ const guildYap = (cat) => ({
       editCagrisi[0].embeds[0].data.image?.url === 'https://cdn.discordapp.com/attachments/1/2/ticket-panel.png',
       editCagrisi[0].embeds[0].data.image?.url,
     );
+      check(
+        'Güncellemede de kategori menüsü gönderiliyor',
+        Array.isArray(editCagrisi[0].components) &&
+          editCagrisi[0].components[1].toJSON().components[0].custom_id === 'tk_ac_kategori',
+      );
   }
 
   // Dosya yoksa kayıtlı URL yedeğine düşüyor mu?

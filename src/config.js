@@ -71,6 +71,10 @@ const TICKET_CATEGORY_ID = '1522774034323079329';
 // Sabit yetkili rolü — ticket açılırken etiketlenir (@mention).
 const TICKET_PING_ROLE_ID = '1522773972393922730';
 
+// Sabit kurallar kanalı (#kurallar) — ana ticket panelindeki "Kurallar" bağlantısı.
+// .env Railway/PaaS tarafından okunmadığı için (gitignore lu) yine sabit yazılır.
+const TICKET_RULES_CHANNEL_ID = '1525548689064464567';
+
 // Guard komutlarını kullanabilen rol — TEK ROLE kilitlidir.
 // .env'deki GUARD_MANAGER_ROLE_IDS BİLEREK GÖZ ARDI EDİLİR (eski roller geçersizdir).
 // Rol koruması (guard/events.js → isSensitiveTarget) aynı listeyi kullanır.
@@ -193,6 +197,8 @@ const config = {
     })(),
     // Kabul Edildiğinde verilecek roller (sırayla denenir, sonuç raporlanır).
     acceptRoleIds: idList('TICKET_ACCEPT_ROLE_IDS'),
+// Paneldeki "Kurallar" bağlantısının hedefi (#kurallar).
+rulesChannelId: (process.env.TICKET_RULES_CHANNEL_ID || '').trim() || TICKET_RULES_CHANNEL_ID,
     color: 0x5865f2,
   },
 
