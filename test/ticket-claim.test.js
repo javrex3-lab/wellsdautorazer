@@ -50,7 +50,11 @@ db.initDatabase();
 /* ------------------------------------------------------------------ */
 let iSayac = 0;
 function dugmeler(row) {
-  return Array.isArray(row.components) ? row.components.map((b) => b.data || b.toJSON()) : row.toJSON().components;
+  // buildTicketRows() bir DIZI dondurur (2 satir); tek satirlik de kabul edilir.
+  const satirlar = Array.isArray(row) ? row : [row];
+  return satirlar.flatMap((r) =>
+    Array.isArray(r.components) ? r.components.map((b) => b.data || b.toJSON()) : r.toJSON().components,
+  );
 }
 
 /** Ticket kanalı + buton etkileşimi üretir. */
@@ -130,29 +134,37 @@ function ac(kind, ownerId) {
   {
     check('CID.SAHIPLEN tanımlı', views.CID.SAHIPLEN === 'tk_sahiplen', views.CID.SAHIPLEN);
 
-    for (const kind of ['basvuru', 'sikayet', 'diger']) {
-      const d = dugmeler(views.buildTicketRow(kind, 'open'));
-      check(`${kind}: "Ticketi Sahiplen" butonu var`, d.some((b) => b.label === 'Ticketi Sahiplen'), d.map((b) => b.label).join(','));
-      const s = d.find((b) => b.label === 'Ticketi Sahiplen');
-      check(`${kind}: emoji 🙋`, s?.emoji?.name === '🙋', JSON.stringify(s?.emoji));
-      check(`${kind}: customId tk_sahiplen`, s?.custom_id === 'tk_sahiplen', s?.custom_id);
-      check(`${kind}: Kapat butonu korundu`, d.some((b) => b.custom_id === 'tk_kapat'));
-      check(`${kind}: Discord sınırı (≤5 buton)`, d.length <= 5, String(d.length));
-    }
+for (const kind of ['basvuru', 'sikayet', 'diger']) {
+  const satirlar = views.buildTicketRows(kind, 'open').map((r) => r.toJSON());
+  const d = dugmeler(views.buildTicketRows(kind, 'open'));
+  check(`${kind}: panel 2 satır`, satirlar.length === 2, String(satirlar.length));
+  check(`${kind}: "Yetkili - Sahiplen" butonu var`, d.some((b) => b.label === 'Yetkili - Sahiplen'), d.map((b) => b.label).join(','));
+  const s = d.find((b) => b.label === 'Yetkili - Sahiplen');
+  check(`${kind}: emoji 👤`, s?.emoji?.name === '👤', JSON.stringify(s?.emoji));
+  check(`${kind}: customId tk_sahiplen`, s?.custom_id === 'tk_sahiplen', s?.custom_id);
+  check(`${kind}: "Yetkili - Kapat" butonu var`, d.some((b) => b.custom_id === 'tk_kapat_yetkili'), d.map((b) => b.custom_id).join(','));
+  check(`${kind}: "Oyuncu - Kapat" butonu var`, d.some((b) => b.custom_id === 'tk_kapat_oyuncu'));
+  check(`${kind}: "Video Yükle" butonu var`, d.some((b) => b.custom_id === 'tk_video_yukle'));
+  check(`${kind}: eski tk_kapat butonu artık panelde YOK`, !d.some((b) => b.custom_id === 'tk_kapat'), d.map((b) => b.custom_id).join(','));
+  check(`${kind}: her satır ≤5 buton (Discord sınırı)`, satirlar.every((r) => r.components.length <= 5), JSON.stringify(satirlar.map((r) => r.components.length)));
+}
 
-    // Başvuru özel butonları bozulmadı
-    const b = dugmeler(views.buildTicketRow('basvuru', 'open')).map((x) => x.custom_id);
-    check('Başvuru: Kabul Et korundu', b.includes(views.CID.KABUL), b.join(','));
-    check('Başvuru: Reddet korundu', b.includes(views.CID.REDDET), b.join(','));
-    check('Başvuru: Kapat korundu', b.includes(views.CID.KAPAT));
-    check('Başvuru: Sahiplen eklendi', b.includes(views.CID.SAHIPLEN));
-    const sikayetD = dugmeler(views.buildTicketRow('sikayet', 'open')).map((x) => x.custom_id);
-    check('Şikayet: Kabul/Reddet yok (eskisi gibi)', !sikayetD.includes(views.CID.KABUL) && !sikayetD.includes(views.CID.REDDET), sikayetD.join(','));
+// Başvuru özel butonları bozulmadı
+const b = dugmeler(views.buildTicketRows('basvuru', 'open')).map((x) => x.custom_id);
+check('Başvuru: Kabul Et korundu', b.includes(views.CID.KABUL), b.join(','));
+check('Başvuru: Reddet korundu', b.includes(views.CID.REDDET), b.join(','));
+check('Başvuru: Sahiplen korundu', b.includes(views.CID.SAHIPLEN));
+check('Başvuru: 6 buton (3 + 3)', b.length === 6, b.join(','));
+const sikayetD = dugmeler(views.buildTicketRows('sikayet', 'open')).map((x) => x.custom_id);
+check('Şikayet: Kabul/Reddet yok (eskisi gibi)', !sikayetD.includes(views.CID.KABUL) && !sikayetD.includes(views.CID.REDDET), sikayetD.join(','));
+check('Şikayet: 4 buton', sikayetD.length === 4, sikayetD.join(','));
 
-    // Kapalı ticket'ta sahiplenme butonu olmamalı
-    const k = dugmeler(views.buildTicketRow('basvuru', 'closed')).map((x) => x.custom_id);
-    check('Kapalı ticket: Sahiplen butonu yok', !k.includes(views.CID.SAHIPLEN), k.join(','));
-    check('Kapalı ticket: Kapat var', k.includes(views.CID.KAPAT));
+// Kapalı ticket'ta sahiplenme butonu olmamalı
+const k = dugmeler(views.buildTicketRows('basvuru', 'closed')).map((x) => x.custom_id);
+check('Kapalı ticket: Sahiplen butonu yok', !k.includes(views.CID.SAHIPLEN), k.join(','));
+check('Kapalı ticket: tek satır', views.buildTicketRows('basvuru', 'closed').length === 1, String(views.buildTicketRows('basvuru', 'closed').length));
+check('Kapalı ticket: Kapat var ve devre dışı', k.includes(views.CID.KAPAT) && views.buildTicketRows('basvuru', 'closed')[0].toJSON().components[0].disabled === true, k.join(','));
+check('Kapalı ticket: kapatma butonları yok', !k.includes('tk_kapat_yetkili') && !k.includes('tk_kapat_oyuncu') && !k.includes('tk_video_yukle'), k.join(','));
 
     // handleTicketButton yönlendirmesi
     const bh = fs.readFileSync(path.join(KOK, 'src/handlers/buttonHandler.js'), 'utf8');

@@ -86,42 +86,68 @@ check('Eski buton fonksiyonu kaldırıldı', views.buildMainPanelRow === undefin
 
 section('2) TICKET KANALI BUTONLARI');
 
-const btn = (kind, st) => views.buildTicketRow(kind, st || 'open').toJSON().components;
+const btn = (kind, st) => views.buildTicketRows(kind, st || 'open').flatMap((r) => r.toJSON().components);
+const satirlar = (kind, st) => views.buildTicketRows(kind, st || 'open').map((r) => r.toJSON());
 const basvuru = btn('basvuru');
+check('Panel 2 satır: sahiplen/kabul-reddet + kapatma/yükleme', satirlar('basvuru').length === 2, 'satır: ' + satirlar('basvuru').length);
 check(
-    'Başvuru: 4 buton (Sahiplen+Kabul+Reddet+Kapat)',
-    basvuru.length === 4,
-    'bulunan: ' + basvuru.length,
-  );
+  'Satır 1: Sahiplen + Kabul + Reddet',
+  satirlar('basvuru')[0].components.map((c) => c.custom_id).join('|') === 'tk_sahiplen|tk_kabul|tk_reddet',
+  satirlar('basvuru')[0].components.map((c) => c.custom_id).join('|'),
+);
 check(
-  'Başvuru butonları: Kabul Et / Reddet / Kapat',
-  basvuru.map((c) => c.label).join('|') === 'Ticketi Sahiplen|Kabul Et|Reddet|Kapat',
+  'Satır 2: Yetkili-Kapat + Oyuncu-Kapat + Video Yükle',
+  satirlar('basvuru')[1].components.map((c) => c.custom_id).join('|') === 'tk_kapat_yetkili|tk_kapat_oyuncu|tk_video_yukle',
+  satirlar('basvuru')[1].components.map((c) => c.custom_id).join('|'),
+);
+check(
+  'Buton etiketleri örnek düzende',
+  basvuru.map((c) => c.label).join('|') === 'Yetkili - Sahiplen|Kabul Et|Reddet|Yetkili - Kapat|Oyuncu - Kapat|Video Yükle',
   basvuru.map((c) => c.label).join('|'),
 );
 check(
-  'Başvuru customId: tk_kabul / tk_reddet / tk_kapat',
-  basvuru.map((c) => c.custom_id).join('|') === 'tk_sahiplen|tk_kabul|tk_reddet|tk_kapat',
+  'Emoji: 👤 ✅ ❌ 💻 🔴 🎥',
+  basvuru.map((c) => c.emoji?.name).join('') === '\u{1F464}\u{2705}\u{274C}\u{1F4BB}\u{1F534}\u{1F3A5}',
+  basvuru.map((c) => c.emoji?.name).join(''),
+);
+check(
+  'Her satırda en fazla 5 buton (Discord sınırı)',
+  satirlar('basvuru').every((r) => r.components.length <= 5),
+  JSON.stringify(satirlar('basvuru').map((r) => r.components.length)),
 );
 for (const k of ['sikayet', 'diger']) {
   const r = btn(k);
-  check(
-      k + ': 2 buton (Sahiplen + Kapat)',
-      r.length === 2 && r.some((c) => c.label === 'Kapat') && r.some((c) => c.label === 'Ticketi Sahiplen'),
-      r.map((c) => c.label).join('|'),
-    );
-  check(k + ': Kabul/Reddet butonu YOK', !r.some((c) => ['Kabul Et', 'Reddet'].includes(c.label)));
+  check(k + ': 4 buton (Sahiplen + iki kapatma + Video Yükle)', r.length === 4, r.map((c) => c.label).join('|'));
+  check(k + ': Sahiplen var', r.some((c) => c.custom_id === 'tk_sahiplen'), r.map((c) => c.custom_id).join('|'));
+  check(k + ': Yetkili - Kapat var', r.some((c) => c.custom_id === 'tk_kapat_yetkili'));
+  check(k + ': Oyuncu - Kapat var', r.some((c) => c.custom_id === 'tk_kapat_oyuncu'));
+  check(k + ': Video Yükle var', r.some((c) => c.custom_id === 'tk_video_yukle'));
+  check(k + ': Kabul/Reddet butonu YOK', !r.some((c) => ['tk_kabul', 'tk_reddet'].includes(c.custom_id)));
+  check(k + ': 2 satır', satirlar(k).length === 2);
+  check(k + ': 1. satırda sadece Sahiplen', satirlar(k)[0].components.length === 1);
 }
 check(
-    'Başvuru kabul edildikten sonra Kabul/Reddet kaybolur',
-    !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_kabul') &&
-      !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_reddet'),
-  );
+  'Başvuru kabul edildikten sonra Kabul/Reddet kaybolur',
+  !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_kabul') &&
+    !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_reddet'),
+);
 check(
-    'Başvuru reddedildikten sonra Kabul/Reddet kaybolur',
-    !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_kabul') &&
-      !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_reddet'),
-  );
-check('Başvuru butonları tek satırda', views.buildTicketRow('basvuru').toJSON().components.length <= 5);
+  'Başvuru reddedildikten sonra Kabul/Reddet kaybolur',
+  !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_kabul') &&
+    !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_reddet'),
+);
+check(
+  'Kapalı ticket: tek satır, devre dışı Kapat',
+  satirlar('basvuru', 'closed').length === 1 &&
+    satirlar('basvuru', 'closed')[0].components[0].disabled === true &&
+    satirlar('basvuru', 'closed')[0].components[0].custom_id === 'tk_kapat',
+  JSON.stringify(satirlar('basvuru', 'closed').map((r) => r.components[0])),
+);
+check(
+  'Kapalı ticket: Sahiplen ve Video Yükle yok',
+  !btn('basvuru', 'closed').some((c) => ['tk_sahiplen', 'tk_video_yukle', 'tk_kapat_yetkili'].includes(c.custom_id)),
+  btn('basvuru', 'closed').map((c) => c.custom_id).join('|'),
+);
 
 /* ================================================================== */
 section('3) EMBED DURUMLARI');
@@ -536,13 +562,27 @@ const guildYap = (cat) => ({
       JSON.stringify(km.allowedMentions.roles) === JSON.stringify([PING_ROLE]),
     JSON.stringify(km.allowedMentions),
   );
-  check('Karşılama embedi başvuru türü', km.embeds[0].data.author.name.includes('Başvuru'), km.embeds[0].data.author?.name);
-  check(
-    'Başvuru karşılamasında 4 buton (Sahiplen dahil)',
-    km.components[0].toJSON().components.length === 4 &&
-      km.components[0].toJSON().components[0].custom_id === 'tk_sahiplen',
-    JSON.stringify(km.components[0].toJSON().components.map((x) => x.custom_id)),
-  );
+/** Mesajdaki tüm bileşen satırlarını tek düz buton listesine çevirir. */
+const mesajButonlari = (mesaj) => (mesaj.components || []).flatMap((r) => r.toJSON().components);
+const mesajSatirSayisi = (mesaj) => (mesaj.components || []).length;
+
+  // Yeni düzende başlık setTitle ile gelir (author kullanılmaz).
+  check('Karşılama embedi başvuru türü', (km.embeds[0].data.title || '').includes('Başvuru'), km.embeds[0].data.title);
+  check('Karşılama embedi ticket numarası içerir', /#\d+/.test(km.embeds[0].data.title || ''), km.embeds[0].data.title);
+  check('Karşılama embedi author kullanmıyor', km.embeds[0].data.author === undefined);
+    check(
+        'Başvuru karşılaması 2 satır (6 buton)',
+        mesajSatirSayisi(km) === 2 && mesajButonlari(km).length === 6,
+        'satır: ' + mesajSatirSayisi(km) + ' buton: ' + mesajButonlari(km).length,
+      );
+      check(
+        'Başvuru karşılama butonları örnek düzende',
+        mesajButonlari(km)
+          .map((x) => x.custom_id)
+          .join('|') === 'tk_sahiplen|tk_kabul|tk_reddet|tk_kapat_yetkili|tk_kapat_oyuncu|tk_video_yukle',
+        mesajButonlari(km).map((x) => x.custom_id).join('|'),
+      );
+
   check('Ticket DBye yazıldı', db.getTicketByChannel(ch1.id)?.owner_id === U2);
   check('Kullanıcının açık ticketı var', db.getOpenTicketByUser(G, U2)?.id !== null);
 
@@ -558,13 +598,18 @@ const guildYap = (cat) => ({
   await tickets.handleOpenButton(ac3, 'sikayet');
   const ch2 = olusan[olusan.length - 1];
   check('Şikayet kanalı açıldı', !!ch2 && olusan.length === 2);
+    check(
+        'Şikayet: 2 satır, 4 buton (Sahiplen + iki kapatma + Video Yükle)',
+        mesajSatirSayisi(ch2.sent[0]) === 2 &&
+          mesajButonlari(ch2.sent[0]).map((x) => x.custom_id).join('|') ===
+            'tk_sahiplen|tk_kapat_yetkili|tk_kapat_oyuncu|tk_video_yukle',
+        mesajButonlari(ch2.sent[0]).map((x) => x.custom_id).join('|'),
+      );
   check(
-    'Şikayet: Sahiplen + Kapat butonu',
-    ch2.sent[0].components[0].toJSON().components.length === 2 &&
-      ch2.sent[0].components[0].toJSON().components.some((x) => x.custom_id === 'tk_sahiplen'),
-    JSON.stringify(ch2.sent[0].components[0].toJSON().components.map((x) => x.custom_id)),
-  );
-  check('Şikayet: kabul/reddet butonu yok', !ch2.sent[0].components[0].toJSON().components.some((c) => c.custom_id === 'tk_kabul'));
+      'Şikayet: kabul/reddet butonu yok',
+      !mesajButonlari(ch2.sent[0]).some((c) => ['tk_kabul', 'tk_reddet'].includes(c.custom_id)),
+      mesajButonlari(ch2.sent[0]).map((x) => x.custom_id).join('|'),
+    );
   check('Şikayet: rol etiketleniyor', ch2.sent[0].content.includes('<@&' + PING_ROLE + '>'));
   check('Şikayet: ticket türü DBde doğru', db.getTicketByChannel(ch2.id)?.kind === 'sikayet');
 
@@ -572,12 +617,13 @@ const guildYap = (cat) => ({
   const ac4 = sahteEtkilesim({ customId: 'tk_ac_diger', channelId: null, userId: '100000000000000003', staff: false, guild });
   await tickets.handleOpenButton(ac4, 'diger');
   const ch3 = olusan[olusan.length - 1];
-  check(
-    'Diğer: Sahiplen + Kapat butonu',
-    ch3.sent[0].components[0].toJSON().components.length === 2 &&
-      ch3.sent[0].components[0].toJSON().components.some((x) => x.custom_id === 'tk_sahiplen'),
-    JSON.stringify(ch3.sent[0].components[0].toJSON().components.map((x) => x.custom_id)),
-  );
+    check(
+        'Diğer: 2 satır, 4 buton (Sahiplen + iki kapatma + Video Yükle)',
+        mesajSatirSayisi(ch3.sent[0]) === 2 &&
+          mesajButonlari(ch3.sent[0]).map((x) => x.custom_id).join('|') ===
+            'tk_sahiplen|tk_kapat_yetkili|tk_kapat_oyuncu|tk_video_yukle',
+        mesajButonlari(ch3.sent[0]).map((x) => x.custom_id).join('|'),
+      );
   check('Diğer: ticket türü DBde doğru', db.getTicketByChannel(ch3.id)?.kind === 'diger');
 
   // --- Kategori yoksa kanal açılmıyor ---

@@ -22,6 +22,10 @@ const CID = {
   REDDET: 'tk_reddet',
   KAPAT: 'tk_kapat',
     SAHIPLEN: 'tk_sahiplen',
+    // Kapatma ikiye ayrıldı: yetkili kendi kararı, oyuncu sadece kendi ticketını.
+    KAPAT_YETKILI: 'tk_kapat_yetkili',
+    KAPAT_OYUNCU: 'tk_kapat_oyuncu',
+    VIDEO_YUKLE: 'tk_video_yukle',
   // Ana paneldeki kategori secim menusu (dropdown).
   AC_KATEGORI: 'tk_ac_kategori',
 };
@@ -132,15 +136,56 @@ function buildMainPanelRows({ rulesUrl = null } = {}) {
 /* 2) TICKET KANALI EMBED'İ                                           */
 /* ------------------------------------------------------------------ */
 
+/** Paneldeki ince ayırıcı (Discord yatay çizgi desteklemez). */
+const AYRA = '\n────────────────────────────\n';
+
 /**
- * Ticket açılış mesajı.
+ * Durum metni — "Destek Durumu" kutusunda gösterilir.
+ * Sahiplenildiyse yetkili adı yazılır; hiçbir zaman tahmin edilmez.
+ * @param {{status:string, claimedBy?:string|null}} p
+ * @returns {string}
+ */
+function durumMetni(p) {
+  if (p.status === 'closed') return 'Bu ticket kapatıldı.';
+  if (p.status === 'rejected') return 'Talebiniz reddedildi.';
+  if (p.status === 'accepted') return 'Talebiniz kabul edildi. 🎉';
+  if (p.claimedBy) return `<@${p.claimedBy}> talebinizi inceliyor.`;
+  return 'Yetkili bekleniyor...';
+}
+
+/**
+ * Ortalama yanıt süresini okunur biçime çevirir.
+ * VERİ YOKSA null döner — ölçülmemiş bir süre UYDURULMAZ.
+ * @param {number|null} ms
+ * @returns {string|null}
+ */
+function sureMetni(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} saniye`;
+  const dk = Math.round(s / 60);
+  if (dk < 60) return `${dk} dakika`;
+  return `${Math.round(dk / 60)} saat`;
+}
+
+/**
+ * Ticket açılış mesajı — örnek düzen.
+ *
+ * Düzen: başlık (tür + numara) → sağ üst arma → açılış cümlesi →
+ * "Destek bilgileri" (ID / kategori / ortalama yanıt) → "Destek Durumu".
+ *
  * @param {object} p
- * @param {string} p.kind      basvuru | sikayet | diger
+ * @param {'basvuru'|'sikayet'|'diger'} p.kind
  * @param {string} p.ownerId
- * @param {string} p.ownerTag
- * @param {string} p.channelName
- * @param {string} [p.status]  open | accepted | rejected | closed
- * @param {string|null} [p.actorId]  kararı veren yetkili
+ * @param {string} [p.ownerTag]
+ * @param {string} [p.ownerAvatarUrl] sağ üstteki arma
+ * @param {number|string} [p.ticketId] "Destek ID"de gösterilen numara
+ * @param {number} [p.createdAt] açılış zamanı (ms)
+ * @param {number|null} [p.avgResponseMs] ortalama ilk yanıt (ms)
+ * @param {'open'|'accepted'|'rejected'|'closed'} [p.status]
+ * @param {string|null} [p.claimedBy]
+ * @param {number|null} [p.claimedAt]
+ * @param {string|null} [p.actorId]
  * @param {Array<{roleId:string, ok:boolean, note?:string}>} [p.roles]
  */
 function buildTicketEmbed(p) {
@@ -155,25 +200,41 @@ function buildTicketEmbed(p) {
   };
   const st = STATUS[status] || STATUS.open;
 
-  const embed = new EmbedBuilder()
-    .setColor(st.color)
-    .setAuthor({
-      name: `${k.emoji} ${k.label} Ticket`,
-      iconURL: null,
-    })
-    .addFields(
-      { name: 'Sahip', value: `<@${p.ownerId}>\n\`${safe(p.ownerTag, 40)}\``, inline: true },
-      { name: 'Tür', value: `${k.emoji} ${k.label}`, inline: true },
-      { name: 'Durum', value: st.text, inline: true },
-    );
+  // Örnekteki biçim: "<emoji> <Tür> Talebi #<id>". Numara yoksa atlanır.
+  const no = p.ticketId === undefined || p.ticketId === null ? null : String(p.ticketId).trim();
+  const baslik = `${k.emoji} ${k.label} Talebi${no ? ` #${no}` : ''}`;
 
-  // 🙋 Sahiplenme alanı — sahiplenildiyse her ticket görünümünde görünür.
+  const embed = new EmbedBuilder().setColor(st.color).setTitle(baslik);
+
+  // Sağ üstte açan kişinin arması (örnekteki kare görsel).
+  if (p.ownerAvatarUrl) embed.setThumbnail(p.ownerAvatarUrl);
+
+  const zaman =
+    Number.isFinite(Number(p.createdAt)) && Number(p.createdAt) > 0
+      ? ` <t:${Math.floor(Number(p.createdAt) / 1000)}:F> tarihinde`
+      : '';
+  const ort = sureMetni(p.avgResponseMs);
+
+  embed.setDescription(
+    `<@${p.ownerId}> tarafından ${k.label} talebi${zaman} oluşturuldu. ` +
+      'Yetkililer size ile ilgilenecektir.' +
+      AYRA +
+      '**Destek bilgileri**\n' +
+      `🔹 **Destek ID** ${no ? `#${no}` : '—'}\n` +
+      `#️⃣ **Destek Kategorisi** **${k.label}**\n` +
+      `⏱ **Ortalama Yanıt Süresi** ${ort ? `\`${ort}\`` : '*henüz veri yok*'}` +
+      AYRA +
+      '**Destek Durumu**\n' +
+      `\`\`\`${durumMetni({ status, claimedBy: p.claimedBy })}\`\`\``,
+  );
+
+  // --- Örnekte olmayan ama SİLİNMEYECEK ek bilgiler ---
   if (p.claimedBy) {
     embed.addFields({
       name: '🙋 Ticket Sahibi Yetkili',
       value:
         `Yetkili: <@${p.claimedBy}>\n` +
-        `Durum: Sahiplenildi` +
+        'Durum: Sahiplenildi' +
         (p.claimedAt ? `\nSahiplenme zamanı: <t:${Math.floor(Number(p.claimedAt) / 1000)}:f>` : ''),
       inline: false,
     });
@@ -198,63 +259,76 @@ function buildTicketEmbed(p) {
     });
   }
 
-  if (status === 'open') {
-    embed.setDescription(
-      k.onaylanabilir
-        ? 'Yetkili ekibimiz başvurunuzu inceleyecek. Sabırlı olduğunuz için teşekkürler.'
-        : 'Yetkili ekibimiz en kısa sürede sizinle iletişime geçecek. Sabırlı olduğunuz için teşekkürler.',
-    );
-  } else if (status === 'accepted') {
-    embed.setDescription('Başvurunuz kabul edildi. Tebrikler! 🎉');
-  } else if (status === 'rejected') {
-    embed.setDescription('Başvurunuz reddedildi. Sorunuz varsa yetkili ekibimize yazabilirsiniz.');
-  } else {
-    embed.setDescription('Bu ticket kapatıldı.');
-  }
-
-  embed.setFooter({ text: 'Ticket kapatmak için 🔒 Kapat butonunu kullanın.' });
+  embed.setFooter({ text: `Ticket #${no || '-'} · Durum: ${st.text}` });
   return embed;
 }
 
 /**
- * Ticket kanalındaki buton satırı.
- * Başvuru → Sahiplen / Kabul / Reddet / Kapat
- * Şikayet & Diğer → Sahiplen / Kapat
+ * Ticket kanalındaki buton satırları.
  *
- * Sahiplenme butonu HER TÜRDE vardır ve her zaman AKTİF kalır: tekrar basıldığında
- * "şu anda <@x> sahiplenmiş" bilgisi verilir (istatistik artmaz). Kapalı
- * ticket'ta satır yalnızca Kapat'a düşer.
+ * Satır 1: 👤 Yetkili - Sahiplen · (Başvuru ise) ✅ Kabul · ❌ Reddet
+ * Satır 2: 💻 Yetkili - Kapat · 🔴 Oyuncu - Kapat · 🎥 Video Yükle
  *
- * @param {string} kind basvuru | sikayet | diger
- * @param {string} status open | accepted | rejected | closed
+ * Kapatma ikiye ayrıldı: yetkili kendi kararıyla, oyuncu sadece kendi
+ * ticketını. İkisi de aynı kapanış akışını çalıştırır (handleClose).
+ *
+ * @param {string} kind
+ * @param {'open'|'accepted'|'rejected'|'closed'} status
  * @param {{claimedBy?:string|null}} [o]
+ * @returns {ActionRowBuilder[]}
  */
-function buildTicketRow(kind, status = 'open', o = {}) {
+function buildTicketRows(kind, status = 'open', o = {}) {
   const k = kindOf(kind);
-  const row = new ActionRowBuilder();
   const kapali = status === 'closed';
 
-  if (!kapali) {
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(CID.SAHIPLEN)
-        .setLabel('Ticketi Sahiplen')
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('🙋'),
-    );
+  // Kapalı ticketta satır yalnızca kapanış bilgisine düşer.
+  if (kapali) {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(CID.KAPAT)
+          .setLabel('Kapat')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('🔒')
+          .setDisabled(true),
+      ),
+    ];
   }
 
+  const ana = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(CID.SAHIPLEN)
+      .setLabel('Yetkili - Sahiplen')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('👤'),
+  );
+
   if (k.onaylanabilir && status === 'open') {
-    row.addComponents(
+    ana.addComponents(
       new ButtonBuilder().setCustomId(CID.KABUL).setLabel('Kabul Et').setStyle(ButtonStyle.Success).setEmoji('✅'),
       new ButtonBuilder().setCustomId(CID.REDDET).setLabel('Reddet').setStyle(ButtonStyle.Danger).setEmoji('❌'),
     );
   }
 
-  row.addComponents(
-    new ButtonBuilder().setCustomId(CID.KAPAT).setLabel('Kapat').setStyle(ButtonStyle.Secondary).setEmoji('🔒'),
+  const alt = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(CID.KAPAT_YETKILI)
+      .setLabel('Yetkili - Kapat')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('💻'),
+    new ButtonBuilder()
+      .setCustomId(CID.KAPAT_OYUNCU)
+      .setLabel('Oyuncu - Kapat')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🔴'),
+    new ButtonBuilder()
+      .setCustomId(CID.VIDEO_YUKLE)
+      .setLabel('Video Yükle')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('🎥'),
   );
-  return row;
+
+  return [ana, alt];
 }
 
 /**
@@ -289,6 +363,8 @@ module.exports = {
     buildMainPanelRows,
   KATEGORI_SECENEKLERI,
   buildTicketEmbed,
-  buildTicketRow,
+  buildTicketRows,
+  durumMetni,
+  sureMetni,
   buildSahiplenmeEmbed,
 };

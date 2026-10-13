@@ -13,6 +13,7 @@
  * ÖNEMLİ: Panel otomatik gönderilmez. Tek yol `/ticketkur`.
  */
 const {
+  EmbedBuilder,
   ChannelType,
   PermissionFlagsBits,
   MessageFlags,
@@ -30,7 +31,7 @@ const {
   kindOf,
   buildMainPanel,
   buildTicketEmbed,
-  buildTicketRow,
+  buildTicketRows,
   buildSahiplenmeEmbed,
 } = require('../utils/ticketViews');
 const {
@@ -46,7 +47,25 @@ const {
   deleteTicketPanel,
   claimTicket,
   getTicketClaimCount,
+  getOrtalamaYanitSuresi,
 } = require('../database/database');
+
+/**
+ * Kullanıcının avatar adresi (panelde sağ üstteki kare).
+ * Kullanıcı nesnesi yoksa ya da avatarı erişilemiyorsa null döner —
+ * görsel yerine ASLA başka bir görsel konmaz.
+ * @param {User|null|undefined} user
+ * @returns {string|null}
+ */
+function avatarUrl(user) {
+  try {
+    if (!user || typeof user.displayAvatarURL !== 'function') return null;
+    return user.displayAvatarURL({ extension: 'png', size: 256 }) || null;
+  } catch (err) {
+    logger.warn(`Avatar adresi alınamadı: ${err.code || err.message}`);
+    return null;
+  }
+}
 
 const EPH = (extra = {}) => ({ flags: MessageFlags.Ephemeral, ...extra });
 
@@ -413,13 +432,17 @@ async function handleOpenButton(interaction, kind) {
       allowedMentions,
       embeds: [
         buildTicketEmbed({
-          kind,
-          ownerId: interaction.user.id,
-          ownerTag: interaction.user.tag,
-          status: 'open',
+        kind,
+        ownerId: interaction.user.id,
+        ownerTag: interaction.user.tag,
+        ownerAvatarUrl: avatarUrl(interaction.user),
+        ticketId: ticket.id,
+        createdAt: ticket.created_at,
+        avgResponseMs: getOrtalamaYanitSuresi(ticket.guild_id),
+        status: 'open',
         }),
       ],
-      components: [buildTicketRow(kind, 'open')],
+      components: buildTicketRows(kind, 'open'),
     });
   } catch (err) {
     await channel.delete('karşılama mesajı gönderilemedi').catch(() => {});
@@ -441,7 +464,10 @@ async function handleTicketButton(interaction) {
   const { customId } = interaction;
   if (customId === CID.KABUL) return handleAccept(interaction);
   if (customId === CID.REDDET) return handleReject(interaction);
-  if (customId === CID.KAPAT) return handleClose(interaction);
+  if (customId === CID.KAPAT) return handleClose(interaction); // eski buton (sahibi VEYA yetkili)
+  if (customId === CID.KAPAT_YETKILI) return handleClose(interaction, 'yetkili');
+  if (customId === CID.KAPAT_OYUNCU) return handleClose(interaction, 'oyuncu');
+  if (customId === CID.VIDEO_YUKLE) return handleVideoYukle(interaction);
   if (customId === CID.SAHIPLEN) return handleSahiplen(interaction);
   return false;
 }
@@ -510,10 +536,18 @@ async function handleAccept(interaction) {
   if (!owner) {
     return safeUpdate(interaction, {
       embeds: [
-        buildTicketEmbed({ kind: ticket.kind, ownerId, ownerTag: '-', status: 'open' }),
+        buildTicketEmbed({
+        kind: ticket.kind,
+        ownerId,
+        ownerTag: '-',
+        ticketId: ticket.id,
+        createdAt: ticket.created_at,
+        avgResponseMs: getOrtalamaYanitSuresi(ticket.guild_id),
+        status: 'open',
+        }),
         buildErrorEmbed('Başvuru sahibi sunucuda bulunamadı — roller verilemedi.'),
       ],
-      components: [buildTicketRow(ticket.kind, 'open')],
+      components: buildTicketRows(ticket.kind, 'open'),
     });
   }
 
@@ -567,18 +601,22 @@ async function handleAccept(interaction) {
   }
 
   const embed = buildTicketEmbed({
-    kind: ticket.kind,
-    ownerId,
-    ownerTag: owner.user.tag,
-    status: tamam ? 'accepted' : 'open',
-    actorId: tamam ? interaction.user.id : null,
-    roles: sonuclar,
+  kind: ticket.kind,
+  ownerId,
+  ownerTag: owner.user.tag,
+  ownerAvatarUrl: avatarUrl(owner?.user),
+  ticketId: ticket.id,
+  createdAt: ticket.created_at,
+  avgResponseMs: getOrtalamaYanitSuresi(ticket.guild_id),
+  status: tamam ? 'accepted' : 'open',
+  actorId: tamam ? interaction.user.id : null,
+  roles: sonuclar,
   });
 
   await interaction.channel
     .send({
       embeds: [embed],
-      components: [buildTicketRow(ticket.kind, tamam ? 'accepted' : 'open')],
+      components: buildTicketRows(ticket.kind, tamam ? 'accepted' : 'open'),
     })
     .catch(() => {});
   await safeUpdate(interaction, { embeds: [], components: [] }).catch(() => {});
@@ -620,11 +658,15 @@ async function handleReject(interaction) {
 
   const owner = await interaction.guild?.members?.fetch?.(ticket.owner_id).catch(() => null);
   const embed = buildTicketEmbed({
-    kind: ticket.kind,
-    ownerId: ticket.owner_id,
-    ownerTag: owner?.user?.tag || '-',
-    status: 'rejected',
-    actorId: interaction.user.id,
+  kind: ticket.kind,
+  ownerId: ticket.owner_id,
+  ownerTag: owner?.user?.tag || '-',
+  ownerAvatarUrl: avatarUrl(owner?.user),
+  ticketId: ticket.id,
+  createdAt: ticket.created_at,
+  avgResponseMs: getOrtalamaYanitSuresi(ticket.guild_id),
+  status: 'rejected',
+  actorId: interaction.user.id,
   });
 
   await interaction.channel
@@ -632,7 +674,7 @@ async function handleReject(interaction) {
       content: `<@${ticket.owner_id}> başvurunuz reddedildi.`,
       allowedMentions: { users: [ticket.owner_id] },
       embeds: [embed],
-      components: [buildTicketRow(ticket.kind, 'rejected')],
+      components: buildTicketRows(ticket.kind, 'rejected'),
     })
     .catch(() => {});
   await safeUpdate(interaction, { embeds: [], components: [] }).catch(() => {});
@@ -745,22 +787,27 @@ async function handleSahiplen(interaction) {
   try {
     const msg = await interaction.channel.messages.fetch(ticket.panel_message_id).catch(() => null);
     if (msg) {
-      const ownerTag = await interaction.guild.members
-        .fetch(ticket.owner_id)
-        .then((mm) => mm?.user?.tag || null)
-        .catch(() => null);
+        const ownerUser = await interaction.guild.members
+          .fetch(ticket.owner_id)
+          .then((mm) => mm?.user || null)
+          .catch(() => null);
+        const ownerTag = ownerUser?.tag || null;
       await msg.edit({
         embeds: [
           buildTicketEmbed({
-            kind: ticket.kind,
-            ownerId: ticket.owner_id,
-            ownerTag: ownerTag || ticket.owner_id,
-            status: ticket.status,
-            claimedBy: sonuc.claimed_by,
-            claimedAt: sonuc.claimed_at,
+          kind: ticket.kind,
+          ownerId: ticket.owner_id,
+          ownerTag: ownerTag || ticket.owner_id,
+          ownerAvatarUrl: avatarUrl(ownerUser),
+          ticketId: ticket.id,
+          createdAt: ticket.created_at,
+          avgResponseMs: getOrtalamaYanitSuresi(ticket.guild_id),
+          status: ticket.status,
+          claimedBy: sonuc.claimed_by,
+          claimedAt: sonuc.claimed_at,
           }),
         ],
-        components: [buildTicketRow(ticket.kind, ticket.status, { claimedBy: sonuc.claimed_by })],
+        components: buildTicketRows(ticket.kind, ticket.status, { claimedBy: sonuc.claimed_by }),
       });
     } else {
       logger.warn(`Ticket mesajı güncellenemedi (bulunamadı): ${ticket.panel_message_id}`);
@@ -773,7 +820,16 @@ async function handleSahiplen(interaction) {
   return true;
 }
 
-async function handleClose(interaction) {
+/**
+ * Ticket kapatma akışı.
+ *
+ * @param {Interaction} interaction
+ * @param {'yetkili'|'oyuncu'|'herkes'} [kisi]
+ *   yetkili -> yalnızca yetkililer (💻 Yetkili - Kapat)
+ *   oyuncu  -> yalnızca ticket sahibi (🔴 Oyuncu - Kapat)
+ *   herkes  -> eski buton; sahibi VEYA yetkili (geriye uyum)
+ */
+async function handleClose(interaction, kisi = 'herkes') {
   const ticket = ticketFromChannel(interaction);
   if (!ticket) return safeReplyGone(interaction);
   if (ticket.status === 'closed') {
@@ -782,8 +838,18 @@ async function handleClose(interaction) {
 
   // Yetkili VEYA sahibi — başkası kapatamaz
   const isOwner = String(ticket.owner_id) === String(interaction.user.id);
-  if (!isOwner && !staffOnly(interaction.member)) {
-    return safeEdit(interaction, { content: '⛔ Bu ticket yalnızca sahibi veya yetkililer tarafından kapatılabilir.' });
+  // Yetki kapsamı butona göre daralır: yetkili butonu oyuncuya, oyuncu butonu yetkiliye açık değildir.
+  const isStaff = staffOnly(interaction.member);
+  const kapsam = kisi === 'yetkili' || kisi === 'oyuncu' ? kisi : 'herkes';
+  const yetkiVar = kapsam === 'yetkili' ? isStaff : kapsam === 'oyuncu' ? isOwner : isOwner || isStaff;
+  if (!yetkiVar) {
+    const mesaj =
+      kapsam === 'yetkili'
+        ? '❌ Bu ticketi yalnızca yetkililer kapatabilir.'
+        : kapsam === 'oyuncu'
+          ? '❌ Bu ticketi yalnızca sahibi kapatabilir.'
+          : '❌ Bu ticket yalnızca sahibi veya yetkililer tarafından kapatılabilir.';
+    return safeEdit(interaction, { content: mesaj });
   }
 
   // Aynı kanal için ikinci bir silme görevi başlatma
@@ -825,6 +891,43 @@ async function handleClose(interaction) {
   return safeEdit(interaction, { content: '🔒 Ticket kapatıldı, kanal 5 saniye içinde silinecek.' });
 }
 
+/**
+ * 🎥 Video Yükle — kullanıcıyı kanala dosya yüklemeye yönlendirir.
+ *
+ * Discord butondan dosya ALAMAZ; bu yüzden buton yalnızca yapılacak işi
+ * söyler. Dosya yüklenmesi kullanıcının kendi mesajıdır.
+ *
+ * NOT: Yüklenen dosyanın saklanması/izlenmesi için AYRI bir sistem gerekir.
+ * Bot o mesajı arşivlemez; burada HİÇBİR ŞEY uydurulmaz.
+ *
+ * @param {Interaction} interaction
+ */
+async function handleVideoYukle(interaction) {
+  const ticket = ticketFromChannel(interaction);
+  if (!ticket) return safeReplyGone(interaction);
+
+  const rol = config.ticket.pingRoleId;
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('🎥 Video / Görsel Yükleme')
+    .setDescription(
+      'Kanala doğrudan dosya yükleyin:\n' +
+        '• Mesaj kutusundaki 📎 simgesine basıp dosyayı seçin, sonra gönderin.\n' +
+        (rol ? `• Yetkiliye haber vermek isterseniz mesajınıza <@&${rol}> yazın.\n` : '') +
+        '\n**Yükleyebileceğiniz dosyalar:** video, görsel veya ekran kaydı.',
+    )
+    .setFooter({ text: `Ticket #${ticket.id}` });
+
+  if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+    return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral }).catch((err) => {
+      logger.warn(`Video yükleme yanıtı gönderilemedi: ${err.code || err.message}`);
+    });
+  }
+  return interaction.editReply({ embeds: [embed] }).catch((err) => {
+    logger.warn(`Video yükleme yanıtı düzenlenemedi: ${err.code || err.message}`);
+  });
+}
+
 function durumAdi(status) {
   return { open: 'açık', accepted: 'kabul edilmiş', rejected: 'reddedilmiş', closed: 'kapatılmış' }[status] || status;
 }
@@ -858,5 +961,7 @@ module.exports = {
   panelEkleri,
   handleTicketButton,
   handleSahiplen,
+  handleClose,
+  handleVideoYukle,
   _silmeZamanlayici: silmeZamanlayici,
 };

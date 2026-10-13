@@ -51,7 +51,10 @@ async function handleButton(interaction) {
       customId === tickets.CID.KABUL ||
       customId === tickets.CID.REDDET ||
       customId === tickets.CID.KAPAT ||
-      customId === tickets.CID.SAHIPLEN
+      customId === tickets.CID.SAHIPLEN ||
+            customId === tickets.CID.KAPAT_YETKILI ||
+            customId === tickets.CID.KAPAT_OYUNCU ||
+            customId === tickets.CID.VIDEO_YUKLE
     ) {
     return tickets.handleTicketButton(interaction);
   }

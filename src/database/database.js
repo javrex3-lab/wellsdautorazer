@@ -691,11 +691,40 @@ function getBanOturum(guildId, userId) {
       return 0;
     }
   }
+
+  /**
+   * Sunucudaki ortalama ilk yanıt süresi (ms).
+   *
+   * "İlk yanıt" = ticket'ın sahiplenildiği an (claimed_at). Sahiplenilmemiş
+   * ticketlar ortalamaya DAHİL EDİLMEZ — aksi halde ortalamayı yalnızca
+   * sahiplenen ticketlar belirler ve istatistik anlamsızlaşır.
+   *
+   * @param {string} guildId
+   * @returns {number|null} ms cinsinden ortalama; veri yoksa null (uydurulmaz)
+   */
+  function getOrtalamaYanitSuresi(guildId) {
+    try {
+      const r = getDb()
+        .prepare(
+          `SELECT AVG(claimed_at - created_at) AS ort FROM ticket_sessions
+           WHERE guild_id = ? AND claimed_at IS NOT NULL AND claimed_at > created_at`,
+        )
+        .get(String(guildId));
+      if (!r || r.ort === null || r.ort === undefined) return null;
+      const ms = Math.round(Number(r.ort));
+      return Number.isFinite(ms) && ms > 0 ? ms : null;
+    } catch (err) {
+      logger.error(`[DB] getOrtalamaYanitSuresi failed: ${guildId}`, err);
+      return null;
+    }
+  }
+
 module.exports = {
   // --- Ticket sahiplenme ---
   claimTicket,
   getTicketTop,
   getTicketClaimCount,
+  getOrtalamaYanitSuresi,
   getBanOturum,
   upsertBanOturum,
   deleteBanOturum,
