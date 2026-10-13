@@ -47,7 +47,12 @@ async function handleButton(interaction) {
     return tickets.handleOpenButton(interaction, tickets.OPEN_KIND[customId]);
   }
   // 2) Ticket kanalı butonları (tk_kabul / tk_reddet / tk_kapat)
-  if (customId === tickets.CID.KABUL || customId === tickets.CID.REDDET || customId === tickets.CID.KAPAT) {
+  if (
+      customId === tickets.CID.KABUL ||
+      customId === tickets.CID.REDDET ||
+      customId === tickets.CID.KAPAT ||
+      customId === tickets.CID.SAHIPLEN
+    ) {
     return tickets.handleTicketButton(interaction);
   }
   // 3) ESKİ ticket_ butonları artık tanınmaz — sessizce yutulmaz, kullanıcıya söylenir.

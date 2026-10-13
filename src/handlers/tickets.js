@@ -23,7 +23,16 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const { canManageTickets } = require('../utils/permissions');
 const { buildErrorEmbed, buildSuccessEmbed } = require('../utils/embeds');
-const { CID, OPEN_KIND, isKnownKind, kindOf, buildMainPanel, buildTicketEmbed, buildTicketRow } = require('../utils/ticketViews');
+const {
+  CID,
+  OPEN_KIND,
+  isKnownKind,
+  kindOf,
+  buildMainPanel,
+  buildTicketEmbed,
+  buildTicketRow,
+  buildSahiplenmeEmbed,
+} = require('../utils/ticketViews');
 const {
   createTicketSession,
   getTicketByChannel,
@@ -35,6 +44,8 @@ const {
   upsertTicketPanel,
   getTicketPanel,
   deleteTicketPanel,
+  claimTicket,
+  getTicketClaimCount,
 } = require('../database/database');
 
 const EPH = (extra = {}) => ({ flags: MessageFlags.Ephemeral, ...extra });
@@ -369,6 +380,7 @@ async function handleTicketButton(interaction) {
   if (customId === CID.KABUL) return handleAccept(interaction);
   if (customId === CID.REDDET) return handleReject(interaction);
   if (customId === CID.KAPAT) return handleClose(interaction);
+  if (customId === CID.SAHIPLEN) return handleSahiplen(interaction);
   return false;
 }
 
@@ -568,6 +580,137 @@ async function handleReject(interaction) {
 }
 
 /* ---------------- Kapat ---------------- */
+/* ---------------- Ticketi Sahiplen ---------------- */
+async function handleSahiplen(interaction) {
+  // 1) Ticket kanalindan cozulur (kanal adina guvenilmez).
+  const ticket = ticketFromChannel(interaction);
+  if (!ticket) return safeReplyGone(interaction);
+
+  // 2) Kapali / kanal atanmamis ticket sahiplenilemez.
+  if (ticket.status === 'closed') {
+    return safeEdit(interaction, { content: '🔒 Bu ticket kapatılmış, sahiplenilemez.' });
+  }
+  if (!ticket.channel_id || String(ticket.channel_id) !== String(interaction.channelId)) {
+  if (String(ticket.guild_id) !== String(interaction.guildId)) {
+    return safeEdit(interaction, { content: '⛔ Bu ticket başka bir sunucuya ait.' });
+  }
+    return safeEdit(interaction, { content: '⛔ Bu bir ticket kanalı değil.' });
+  }
+
+  // 3) Yetki: yalnizca yetkili olabilir. Ticket sahibi olmak YETKI degildir;
+  //    yetkili olmayan sahip kendi ticketini sahiplenemez.
+  if (!staffOnly(interaction.member)) {
+    return safeEdit(interaction, {
+      content: '⛔ Ticket sahiplenme yalnızca yetkililer tarafından yapılabilir.',
+    });
+  }
+
+  // 4) DB: ATOMIK sahiplenme. Eszamanli iki tiklamada yalnizca BIRI kazanir;
+  //    istatistik ayni transaction icinde TAM OLARAK BIR KEZ artar.
+  const sonuc = claimTicket(ticket.id, interaction.user.id);
+
+  if (!sonuc.ok) {
+    if (sonuc.reason === 'already') {
+      const sahip = sonuc.claimed_by;
+      return safeEdit(interaction, {
+        content:
+          sahip && sahip !== String(interaction.user.id)
+            ? `🙋 Bu ticket zaten <@${sahip}> tarafından sahiplenmiş. Her ticket'in tek sahibi olur.`
+            : '🙋 Bu ticket zaten tarafınızca sahiplenmiş. İstatistik tekrar artırılmadı.',
+        embeds: sahip
+          ? [
+              buildSahiplenmeEmbed({
+                claimerId: sahip,
+                kind: ticket.kind,
+                at: ticket.claimed_at || Date.now(),
+                ownerId: ticket.owner_id,
+              }),
+            ]
+          : [],
+      });
+    }
+    if (sonuc.reason === 'closed') {
+      return safeEdit(interaction, { content: '🔒 Bu ticket kapatılmış, sahiplenilemez.' });
+    }
+    if (sonuc.reason === 'no_channel') {
+      return safeEdit(interaction, { content: '⛔ Ticket kanalı henüz hazır değil.' });
+    }
+    // DB hatası: BAŞARILI DENİLMEZ, açıkça hata bildirilir.
+    logger.error(`Ticket sahiplenilemedi (ticket ${ticket.id}): ${sonuc.reason}`);
+    return safeEdit(interaction, { content: '❌ Sahiplenme kaydedilemedi. Lütfen tekrar deneyin.' });
+  }
+
+  // 5) Kalıcı kayıt tamam. Simdi kullanıcıya ve kanala bildir.
+  const k = kindOf(ticket.kind);
+  const toplam = getTicketClaimCount(interaction.guildId, interaction.user.id);
+
+  logger.success(`Ticket #${ticket.id} sahiplendi: <@${interaction.user.id}> (toplam ${toplam})`);
+
+  // 5a) Kullanıcıya (kanaldaki butona basılan kişiye) onay.
+  await safeEdit(interaction, {
+    content: `✅ <@${interaction.user.id}> bu ticketi sahiplendi.`,
+    embeds: [
+      buildSahiplenmeEmbed({
+        claimerId: interaction.user.id,
+        kind: ticket.kind,
+        at: sonuc.claimed_at,
+        ownerId: ticket.owner_id,
+      }),
+    ],
+    allowedMentions: { parse: [], users: [interaction.user.id], roles: [], repliedUser: false },
+  });
+
+  // 5b) Ticket kanalina acikca gorunen mesaj.
+  await interaction.channel
+    .send({
+      content: `✅ <@${interaction.user.id}> bu ticketi sahiplendi.`,
+      embeds: [
+        buildSahiplenmeEmbed({
+          claimerId: interaction.user.id,
+          kind: ticket.kind,
+          at: sonuc.claimed_at,
+          ownerId: ticket.owner_id,
+        }),
+      ],
+      allowedMentions: { parse: [], users: [interaction.user.id], roles: [], repliedUser: false },
+    })
+    .catch((err) => {
+      // Sahiplenme DB'de KAYITLI; yalnizca kanal mesaji gitmedi.
+      logger.warn(`Sahiplenme kanal mesaji gönderilemedi: ${err.code || err.message}`);
+    });
+
+  // 5c) Ticket mesajini guncelle: sahiplenme alani + butonlar.
+  try {
+    const msg = await interaction.channel.messages.fetch(ticket.panel_message_id).catch(() => null);
+    if (msg) {
+      const ownerTag = await interaction.guild.members
+        .fetch(ticket.owner_id)
+        .then((mm) => mm?.user?.tag || null)
+        .catch(() => null);
+      await msg.edit({
+        embeds: [
+          buildTicketEmbed({
+            kind: ticket.kind,
+            ownerId: ticket.owner_id,
+            ownerTag: ownerTag || ticket.owner_id,
+            status: ticket.status,
+            claimedBy: sonuc.claimed_by,
+            claimedAt: sonuc.claimed_at,
+          }),
+        ],
+        components: [buildTicketRow(ticket.kind, ticket.status, { claimedBy: sonuc.claimed_by })],
+      });
+    } else {
+      logger.warn(`Ticket mesajı güncellenemedi (bulunamadı): ${ticket.panel_message_id}`);
+    }
+  } catch (err) {
+    logger.warn(`Ticket mesajı güncellenemedi: ${err.code || err.message}`);
+  }
+
+  void k;
+  return true;
+}
+
 async function handleClose(interaction) {
   const ticket = ticketFromChannel(interaction);
   if (!ticket) return safeReplyGone(interaction);
@@ -650,5 +793,6 @@ module.exports = {
   resolveTicketCategory,
   handleOpenButton,
   handleTicketButton,
+  handleSahiplen,
   _silmeZamanlayici: silmeZamanlayici,
 };

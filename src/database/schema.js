@@ -193,6 +193,8 @@ CREATE TABLE IF NOT EXISTS ticket_sessions (
   kind        TEXT NOT NULL CHECK (kind IN ('basvuru', 'sikayet', 'diger')),
   status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'accepted', 'rejected', 'closed')),
   actor_id    TEXT,
+  claimed_by   TEXT,          -- ticket i sahiplenen yetkili (tek kisi, bir kez)
+  claimed_at   INTEGER,       -- sahiplenme zamani (ms)
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
   closed_at   INTEGER

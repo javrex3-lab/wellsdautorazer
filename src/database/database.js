@@ -113,6 +113,36 @@ function migrate(database) {
   }
 
   /* ------------------------------------------------------------------ */
+  /* TICKET SAHIPLENME GOCU - claimed_by / claimed_at                    */
+  /* ------------------------------------------------------------------ */
+  // `CREATE TABLE IF NOT EXISTS` mevcut tabloyu degistirmez. Daha once
+  // olusturulmus `ticket_sessions` tablosunda claimed_by/claimed_at YOKTUR;
+  // sahiplenme INSERTleri sessizce basarisiz olur ve istatistik hic olusmaz.
+  try {
+    const tCols = database.prepare('PRAGMA table_info(ticket_sessions)').all().map((c) => c.name);
+    if (!tCols.length) {
+      logger.warn('[DB] ticket_sessions tablosu yok (SCHEMA calismamis?) - sahiplenme gocu atlaniyor.');
+    } else {
+      let eklendi = false;
+      if (!tCols.includes('claimed_by')) { database.exec('ALTER TABLE ticket_sessions ADD COLUMN claimed_by TEXT'); eklendi = true; }
+      if (!tCols.includes('claimed_at')) { database.exec('ALTER TABLE ticket_sessions ADD COLUMN claimed_at INTEGER'); eklendi = true; }
+      if (eklendi) {
+        database.exec('CREATE INDEX IF NOT EXISTS idx_ts_claimed ON ticket_sessions (guild_id, claimed_by)');
+        logger.warn('[DB] Ticket gocu: claimed_by / claimed_at sutunlari eklendi.');
+      }
+      const sCols2 = database.prepare('PRAGMA table_info(ticket_sessions)').all().map((c) => c.name);
+      if (sCols2.includes('claimed_by') && sCols2.includes('claimed_at')) {
+        logger.db('Ticket semasi hazir (claimed_by mevcut, istatistik tablosu hazir).');
+      } else {
+        logger.error('[DB] Ticket gocu SONRASI claimed sutunlari hala eksik!');
+      }
+    }
+  } catch (err) {
+    // Gocu hatasi GIZLENMEZ.
+    logger.error('[DB] Ticket sahiplenme gocu BASARISIZ - sahiplenme kaydedilemeyebilir:', err);
+  }
+
+  /* ------------------------------------------------------------------ */
   /* MAZERET GÖÇÜ — kritik                                             */
   /* ------------------------------------------------------------------ */
   // `CREATE TABLE IF NOT EXISTS` MEVCUT tabloyu değiştirmez. Eski mazeret
@@ -536,7 +566,136 @@ function getBanOturum(guildId, userId) {
     }
   }
 
+/* ================================================================== */
+  /* TICKET SAHIPLENME                                                  */
+  /* ================================================================== */
+
+  /**
+   * Ticket'i sahiplenir - ATOMIK ve TAM OLARAK BIR KEZ.
+   *
+   * Tek bir `UPDATE ... WHERE claimed_by IS NULL` kosulu kullanilir: eszamanli
+   * iki tiklama olsa bile SQLite satiri YALNIZCA BIR kez gunceller, boylece
+   * kazanan belirgindir ve istatistik bir kez artar. Istatistik artisi ayni
+   * transaction icindedir; DB yazamazsa cagirana {ok:false} doner ve
+   * "basarili" yalani soylenmez.
+   *
+   * @param {number|string} ticketId
+   * @param {string} staffId sahiplenen yetkili
+   * @returns {{ok:true, claimed_by:string, claimed_at:number}
+   *          |{ok:false, reason:'already'|'closed'|'no_channel'|'not_found'|'db', claimed_by?:string|null}}
+   */
+  function claimTicket(ticketId, staffId) {
+    const d = getDb();
+    const id = Number(ticketId);
+    const uid = String(staffId);
+    try {
+      d.exec('BEGIN IMMEDIATE');
+      try {
+        const t = d.prepare('SELECT * FROM ticket_sessions WHERE id = ?').get(id);
+        if (!t) {
+          d.exec('ROLLBACK');
+          return { ok: false, reason: 'not_found' };
+        }
+        if (t.status === 'closed') {
+          d.exec('ROLLBACK');
+          return { ok: false, reason: 'closed' };
+        }
+        if (!t.channel_id) {
+          d.exec('ROLLBACK');
+          return { ok: false, reason: 'no_channel' };
+        }
+        if (t.claimed_by) {
+          d.exec('ROLLBACK');
+          return { ok: false, reason: 'already', claimed_by: String(t.claimed_by) };
+        }
+
+        const now = Date.now();
+        const r = d
+          .prepare(
+            "UPDATE ticket_sessions SET claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND claimed_by IS NULL AND status != 'closed'",
+          )
+          .run(uid, now, now, id);
+
+        if (Number(r.changes) !== 1) {
+          d.exec('ROLLBACK');
+          const guncel = d.prepare('SELECT claimed_by FROM ticket_sessions WHERE id = ?').get(id);
+          return { ok: false, reason: 'already', claimed_by: guncel?.claimed_by ? String(guncel.claimed_by) : null };
+        }
+
+        // Istatistik: ayni transaction icinde, YALNIZCA bu kazanan icin.
+        d.prepare(
+          `INSERT INTO ticket_stats (guild_id, user_id, claimed_count, updated_at)
+           VALUES (?, ?, 1, ?)
+           ON CONFLICT(guild_id, user_id) DO UPDATE SET
+             claimed_count = claimed_count + 1,
+             updated_at = excluded.updated_at`,
+        ).run(String(t.guild_id), uid, now);
+
+        d.exec('COMMIT');
+        return { ok: true, claimed_by: uid, claimed_at: now };
+      } catch (i) {
+        try {
+          d.exec('ROLLBACK');
+        } catch {
+          /* zaten kapali */
+        }
+        throw i;
+      }
+    } catch (err) {
+      logger.error(`[DB] claimTicket failed: ${id}/${uid}`, err);
+      return { ok: false, reason: 'db' };
+    }
+  }
+
+  /**
+   * /ticketop siralamasi - YALNIZCA verilen sunucunun verisi.
+   * Esitlikte deterministik: claimed_count DESC, sonra ilk sahiplenme zamani,
+   * sonra kullanici ID ASC (her zaman ayni sira).
+   */
+  function getTicketTop(guildId, limit = 10) {
+    try {
+      const n = Math.min(50, Math.max(1, Number(limit) || 10));
+      return getDb()
+        .prepare(
+          `SELECT ts.user_id,
+                  ts.claimed_count,
+                  ts.updated_at,
+                  (SELECT MIN(claimed_at) FROM ticket_sessions x
+                   WHERE x.guild_id = ts.guild_id AND x.claimed_by = ts.user_id) AS ilk_claim
+           FROM ticket_stats ts
+           WHERE ts.guild_id = ? AND ts.claimed_count > 0
+           ORDER BY ts.claimed_count DESC, ilk_claim ASC, ts.user_id ASC
+           LIMIT ?`,
+        )
+        .all(String(guildId), n)
+        .map((r) => ({
+          user_id: String(r.user_id),
+          claimed_count: Number(r.claimed_count),
+          ilk_claim: r.ilk_claim ? Number(r.ilk_claim) : null,
+        }));
+    } catch (err) {
+      logger.error(`[DB] getTicketTop failed: ${guildId}`, err);
+      return [];
+    }
+  }
+
+  /** Bir yetkilinin toplam sahiplenme sayisi. */
+  function getTicketClaimCount(guildId, userId) {
+    try {
+      const r = getDb()
+        .prepare('SELECT claimed_count FROM ticket_stats WHERE guild_id = ? AND user_id = ?')
+        .get(String(guildId), String(userId));
+      return Number(r?.claimed_count || 0);
+    } catch (err) {
+      logger.error(`[DB] getTicketClaimCount failed: ${guildId}/${userId}`, err);
+      return 0;
+    }
+  }
 module.exports = {
+  // --- Ticket sahiplenme ---
+  claimTicket,
+  getTicketTop,
+  getTicketClaimCount,
   getBanOturum,
   upsertBanOturum,
   deleteBanOturum,

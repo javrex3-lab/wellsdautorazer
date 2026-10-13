@@ -15,6 +15,7 @@ const CID = {
   KABUL: 'tk_kabul',
   REDDET: 'tk_reddet',
   KAPAT: 'tk_kapat',
+  SAHIPLEN: 'tk_sahiplen',
 };
 
 /** Panel butonlarının customId → ticket türü eşlemesi. */
@@ -130,6 +131,18 @@ function buildTicketEmbed(p) {
       { name: 'Durum', value: st.text, inline: true },
     );
 
+  // 🙋 Sahiplenme alanı — sahiplenildiyse her ticket görünümünde görünür.
+  if (p.claimedBy) {
+    embed.addFields({
+      name: '🙋 Ticket Sahibi Yetkili',
+      value:
+        `Yetkili: <@${p.claimedBy}>\n` +
+        `Durum: Sahiplenildi` +
+        (p.claimedAt ? `\nSahiplenme zamanı: <t:${Math.floor(Number(p.claimedAt) / 1000)}:f>` : ''),
+      inline: false,
+    });
+  }
+
   if (status === 'accepted' || status === 'rejected') {
     embed.addFields({
       name: status === 'accepted' ? 'Kabul Eden' : 'Reddeden',
@@ -169,12 +182,31 @@ function buildTicketEmbed(p) {
 
 /**
  * Ticket kanalındaki buton satırı.
- * Başvuru → Kabul / Reddet / Kapat
- * Şikayet & Diğer → yalnızca Kapat
+ * Başvuru → Sahiplen / Kabul / Reddet / Kapat
+ * Şikayet & Diğer → Sahiplen / Kapat
+ *
+ * Sahiplenme butonu HER TÜRDE vardır ve her zaman AKTİF kalır: tekrar basıldığında
+ * "şu anda <@x> sahiplenmiş" bilgisi verilir (istatistik artmaz). Kapalı
+ * ticket'ta satır yalnızca Kapat'a düşer.
+ *
+ * @param {string} kind basvuru | sikayet | diger
+ * @param {string} status open | accepted | rejected | closed
+ * @param {{claimedBy?:string|null}} [o]
  */
-function buildTicketRow(kind, status = 'open') {
+function buildTicketRow(kind, status = 'open', o = {}) {
   const k = kindOf(kind);
   const row = new ActionRowBuilder();
+  const kapali = status === 'closed';
+
+  if (!kapali) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(CID.SAHIPLEN)
+        .setLabel('Ticketi Sahiplen')
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('🙋'),
+    );
+  }
 
   if (k.onaylanabilir && status === 'open') {
     row.addComponents(
@@ -189,6 +221,28 @@ function buildTicketRow(kind, status = 'open') {
   return row;
 }
 
+/**
+ * Sahiplenme sonrası kanalda gönderilen profesyonel embed.
+ * @param {{claimerId:string, kind:string, at:number, ownerId?:string}} p
+ */
+function buildSahiplenmeEmbed(p) {
+  const k = kindOf(p.kind);
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('🙋 Ticket Sahiplenildi')
+    .addFields(
+      { name: 'Sahiplenen Yetkili', value: `<@${p.claimerId}>\n\`${p.claimerId}\``, inline: true },
+      { name: 'Ticket Türü', value: `${k.emoji} ${k.label}`, inline: true },
+      {
+        name: 'Sahiplenme Zamanı',
+        value: `<t:${Math.floor(Number(p.at) / 1000)}:f> (<t:${Math.floor(Number(p.at) / 1000)}:R>)`,
+        inline: true,
+      },
+    )
+    .setFooter({ text: 'Bu ticket artık sahiplenen yetkili tarafından takip ediliyor.' })
+    .setTimestamp(Number(p.at));
+}
+
 module.exports = {
   CID,
   OPEN_KIND,
@@ -199,4 +253,5 @@ module.exports = {
   buildMainPanelRow,
   buildTicketEmbed,
   buildTicketRow,
+  buildSahiplenmeEmbed,
 };

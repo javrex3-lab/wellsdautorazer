@@ -68,23 +68,39 @@ section('2) TICKET KANALI BUTONLARI');
 
 const btn = (kind, st) => views.buildTicketRow(kind, st || 'open').toJSON().components;
 const basvuru = btn('basvuru');
-check('Başvuru: 3 buton', basvuru.length === 3, 'bulunan: ' + basvuru.length);
+check(
+    'Başvuru: 4 buton (Sahiplen+Kabul+Reddet+Kapat)',
+    basvuru.length === 4,
+    'bulunan: ' + basvuru.length,
+  );
 check(
   'Başvuru butonları: Kabul Et / Reddet / Kapat',
-  basvuru.map((c) => c.label).join('|') === 'Kabul Et|Reddet|Kapat',
+  basvuru.map((c) => c.label).join('|') === 'Ticketi Sahiplen|Kabul Et|Reddet|Kapat',
   basvuru.map((c) => c.label).join('|'),
 );
 check(
   'Başvuru customId: tk_kabul / tk_reddet / tk_kapat',
-  basvuru.map((c) => c.custom_id).join('|') === 'tk_kabul|tk_reddet|tk_kapat',
+  basvuru.map((c) => c.custom_id).join('|') === 'tk_sahiplen|tk_kabul|tk_reddet|tk_kapat',
 );
 for (const k of ['sikayet', 'diger']) {
   const r = btn(k);
-  check(k + ': sadece 1 buton (Kapat)', r.length === 1 && r[0].label === 'Kapat', r.map((c) => c.label).join('|'));
+  check(
+      k + ': 2 buton (Sahiplen + Kapat)',
+      r.length === 2 && r.some((c) => c.label === 'Kapat') && r.some((c) => c.label === 'Ticketi Sahiplen'),
+      r.map((c) => c.label).join('|'),
+    );
   check(k + ': Kabul/Reddet butonu YOK', !r.some((c) => ['Kabul Et', 'Reddet'].includes(c.label)));
 }
-check('Başvuru kabul edildikten sonra Kabul/Reddet kaybolur', btn('basvuru', 'accepted').length === 1);
-check('Başvuru reddedildikten sonra Kabul/Reddet kaybolur', btn('basvuru', 'rejected').length === 1);
+check(
+    'Başvuru kabul edildikten sonra Kabul/Reddet kaybolur',
+    !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_kabul') &&
+      !btn('basvuru', 'accepted').some((c) => c.custom_id === 'tk_reddet'),
+  );
+check(
+    'Başvuru reddedildikten sonra Kabul/Reddet kaybolur',
+    !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_kabul') &&
+      !btn('basvuru', 'rejected').some((c) => c.custom_id === 'tk_reddet'),
+  );
 check('Başvuru butonları tek satırda', views.buildTicketRow('basvuru').toJSON().components.length <= 5);
 
 /* ================================================================== */
@@ -361,12 +377,17 @@ const guildYap = (cat) => ({
     'src/handlers/selectHandler.js',
     'src/commands/ticketpanel.js',
     'src/commands/ticketpng.js',
-    'src/commands/ticketop.js',
     'src/commands/ticketpermissionrepair.js',
   ]) {
     check('Silindi: ' + f, !fs.existsSync(path.join(kok, f)));
   }
-  for (const f of ['src/handlers/tickets.js', 'src/utils/ticketViews.js', 'src/commands/ticketkur.js']) {
+    for (const f of [
+    'src/handlers/tickets.js',
+    'src/utils/ticketViews.js',
+    'src/commands/ticketkur.js',
+    'src/commands/ticketop.js',
+    'src/utils/leaderboardImage.js',
+  ]) {
     check('Var: ' + f, fs.existsSync(path.join(kok, f)));
   }
 
@@ -417,8 +438,17 @@ const guildYap = (cat) => ({
     cagiranlar.map((f) => path.relative(kok, f)).join(', '),
   );
 
-  for (const f of ['createTicket', 'claimTicket', 'closeTicket', 'deleteTicket', 'getAllTickets', 'setTicketPanelMessage']) {
+  // NOT: claimTicket artik var — yeni sahiplenme ozelliginin DB fonksiyonudur.
+    for (const f of ['createTicket', 'closeTicket', 'deleteTicket', 'getAllTickets', 'setTicketPanelMessage']) {
     check('DB artık export etmiyor: ' + f, typeof db[f] !== 'function');
+  }
+  {
+    check(
+      'DB export ediyor: claimTicket (sahiplenme ozelligi)',
+      typeof db.claimTicket === 'function',
+    );
+    check('DB export ediyor: getTicketTop', typeof db.getTicketTop === 'function');
+    check('DB export ediyor: getTicketClaimCount', typeof db.getTicketClaimCount === 'function');
   }
 
   check('TICKET_CATEGORY_ID = ' + CATEGORY, config.ticket.categoryId === CATEGORY, String(config.ticket.categoryId));
@@ -487,7 +517,12 @@ const guildYap = (cat) => ({
     JSON.stringify(km.allowedMentions),
   );
   check('Karşılama embedi başvuru türü', km.embeds[0].data.author.name.includes('Başvuru'), km.embeds[0].data.author?.name);
-  check('Başvuru karşılamasında 3 buton', km.components[0].toJSON().components.length === 3);
+  check(
+    'Başvuru karşılamasında 4 buton (Sahiplen dahil)',
+    km.components[0].toJSON().components.length === 4 &&
+      km.components[0].toJSON().components[0].custom_id === 'tk_sahiplen',
+    JSON.stringify(km.components[0].toJSON().components.map((x) => x.custom_id)),
+  );
   check('Ticket DBye yazıldı', db.getTicketByChannel(ch1.id)?.owner_id === U2);
   check('Kullanıcının açık ticketı var', db.getOpenTicketByUser(G, U2)?.id !== null);
 
@@ -503,7 +538,12 @@ const guildYap = (cat) => ({
   await tickets.handleOpenButton(ac3, 'sikayet');
   const ch2 = olusan[olusan.length - 1];
   check('Şikayet kanalı açıldı', !!ch2 && olusan.length === 2);
-  check('Şikayet: sadece Kapat butonu', ch2.sent[0].components[0].toJSON().components.length === 1);
+  check(
+    'Şikayet: Sahiplen + Kapat butonu',
+    ch2.sent[0].components[0].toJSON().components.length === 2 &&
+      ch2.sent[0].components[0].toJSON().components.some((x) => x.custom_id === 'tk_sahiplen'),
+    JSON.stringify(ch2.sent[0].components[0].toJSON().components.map((x) => x.custom_id)),
+  );
   check('Şikayet: kabul/reddet butonu yok', !ch2.sent[0].components[0].toJSON().components.some((c) => c.custom_id === 'tk_kabul'));
   check('Şikayet: rol etiketleniyor', ch2.sent[0].content.includes('<@&' + PING_ROLE + '>'));
   check('Şikayet: ticket türü DBde doğru', db.getTicketByChannel(ch2.id)?.kind === 'sikayet');
@@ -512,7 +552,12 @@ const guildYap = (cat) => ({
   const ac4 = sahteEtkilesim({ customId: 'tk_ac_diger', channelId: null, userId: '100000000000000003', staff: false, guild });
   await tickets.handleOpenButton(ac4, 'diger');
   const ch3 = olusan[olusan.length - 1];
-  check('Diğer: sadece Kapat butonu', ch3.sent[0].components[0].toJSON().components.length === 1);
+  check(
+    'Diğer: Sahiplen + Kapat butonu',
+    ch3.sent[0].components[0].toJSON().components.length === 2 &&
+      ch3.sent[0].components[0].toJSON().components.some((x) => x.custom_id === 'tk_sahiplen'),
+    JSON.stringify(ch3.sent[0].components[0].toJSON().components.map((x) => x.custom_id)),
+  );
   check('Diğer: ticket türü DBde doğru', db.getTicketByChannel(ch3.id)?.kind === 'diger');
 
   // --- Kategori yoksa kanal açılmıyor ---
