@@ -454,7 +454,93 @@ function getAktiflikList(messageId) {
     }
   }
 
+  /* ================================================================== */
+  /* BANLILAR — form oturumu (restart-safe)                                 */
+  /* ================================================================== */
+
+  /** Aktif form oturumu (yoksa null). */
+  /** Form oturumu beklenecek sure (30 dk). */
+const BAN_OTURUM_SURE_MS = 30 * 60 * 1000;
+
+function getBanOturum(guildId, userId) {
+    try {
+      const r = getDb()
+        .prepare("SELECT * FROM ban_form_oturumlari WHERE guild_id = ? AND user_id = ? AND guncellendi >= ?")
+        .get(String(guildId), String(userId), Date.now() - BAN_OTURUM_SURE_MS);
+      if (!r) return null;
+      let veri = {};
+      try {
+        veri = JSON.parse(r.veri || '{}');
+      } catch {
+        veri = {};
+      }
+      return { ...r, veri };
+    } catch (err) {
+      logger.error(`[DB] getBanOturum failed: ${guildId}/${userId}`, err);
+      return null;
+    }
+  }
+
+  /** Oturumu yaratır/günceller. */
+  function upsertBanOturum({ guildId, userId, kanalId, adim, veri = {} }) {
+    try {
+      const simdi = Date.now();
+      getDb()
+        .prepare(
+          `INSERT INTO ban_form_oturumlari (guild_id, user_id, kanal_id, adim, veri, baslangic, guncellendi)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(guild_id, user_id) DO UPDATE SET
+             kanal_id = excluded.kanal_id,
+             adim = excluded.adim,
+             veri = excluded.veri,
+             guncellendi = excluded.guncellendi`
+        )
+        .run(
+          String(guildId),
+          String(userId),
+          String(kanalId),
+          String(adim),
+          JSON.stringify(veri),
+          simdi,
+          simdi
+        );
+      return true;
+    } catch (err) {
+      logger.error(`[DB] upsertBanOturum failed: ${guildId}/${userId}`, err);
+      return false;
+    }
+  }
+
+  function deleteBanOturum(guildId, userId) {
+    try {
+      getDb()
+        .prepare("DELETE FROM ban_form_oturumlari WHERE guild_id = ? AND user_id = ?")
+        .run(String(guildId), String(userId));
+      return true;
+    } catch (err) {
+      logger.error(`[DB] deleteBanOturum failed: ${guildId}/${userId}`, err);
+      return false;
+    }
+  }
+
+  /** Süresi dolmuş oturumları siler (birikim olmaz). */
+  function temizleBanOturumlar() {
+    try {
+      const r = getDb()
+        .prepare("DELETE FROM ban_form_oturumlari WHERE guncellendi < ?")
+        .run(Date.now() - BAN_OTURUM_SURE_MS);
+      return Number(r.changes || 0);
+    } catch (err) {
+      logger.error("[DB] temizleBanOturumlar failed", err);
+      return 0;
+    }
+  }
+
 module.exports = {
+  getBanOturum,
+  upsertBanOturum,
+  deleteBanOturum,
+  temizleBanOturumlar,
   // --- Banlılar bildirim sistemi ---
   createBanBildirimi,
   completeBanBildirimi,

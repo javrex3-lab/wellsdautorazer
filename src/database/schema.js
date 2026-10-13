@@ -405,6 +405,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_ban_bildirim_mesaj
 
 -- /banlılar panelinin TEK mesaj kaydı. Aynı sunucuda ikinci panel
 -- oluşturulmaz; komut tekrar çalıştırılırsa mesaj DÜZENLENİR.
+
+-- Surum gosterimi sirasinda baslatilan ban bildirim formu.
+-- RAM yerine DB'de tutulur: bot yeniden baslasa bile form KAYBOLMAZ.
+-- veri alani JSON metnidir: { id, sebep, tarih }
+CREATE TABLE IF NOT EXISTS ban_form_oturumlari (
+  guild_id   TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  kanal_id   TEXT NOT NULL,
+  adim       TEXT NOT NULL,
+  veri       TEXT NOT NULL DEFAULT '{}',
+  baslangic  INTEGER NOT NULL,
+  guncellendi INTEGER NOT NULL,
+  PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ban_oturum_guncel ON ban_form_oturumlari (guncellendi);
 CREATE TABLE IF NOT EXISTS ban_panels (
   guild_id   TEXT PRIMARY KEY,
   channel_id TEXT NOT NULL,

@@ -84,10 +84,9 @@ async function handleButton(interaction) {
     return mz.handleSayfalama(interaction, 'ileri');
   }
       /* ================= BANLILAR BILDIRIM SISTEMI ================= */
-    // Buton: "Banliyim" -> Ban Bilgilerini Bildir modali
-    if (customId === ban.CID.BILDIR) {
-      return ban.handleBildirButton(interaction);
-    }
+    // Tum bn_* butonlari (Banliyim / yazma penceresi / tarih secimi / iptal)
+    // tek noktadan yonlendirilir. Islenmediyse false doner.
+    if (ban.handleEtkilesim(interaction)) return true;
     /* ============================================================ */
 
 if (customId === 'quit_roles') {
