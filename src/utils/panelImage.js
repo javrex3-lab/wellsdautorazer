@@ -1,7 +1,7 @@
 /**
  * Ortak panel görseli (BANLILAR + MAZERET panelleri).
  *
- * Dosya repoda GÖMÜLÜDÜR ve mesaja attachment olarak eklenir; embed `attachment://`
+ * Dosya repoda GÖMÜLÜDÜR ve mesaja attachment olarak eklenir;
  * adresine bağlanır (CDN 404 riski yok — mesaj silinmeden görsel hep erişilebilir).
  * Bu, ticket sistemindeki mevcut desenin aynısıdır.
  *
@@ -9,7 +9,13 @@
  *  - kaynak: dosya -> mesaja yüklenir (en sağlam, varsayılan)
  *  - kaynak: yok   -> görselsiz panel (sistem ÇÖKMEZ, panel yine gider)
  *
- * Not: Ticket paneli kendi kopyasını (tickets.js) kullanır; o dosyaya dokunulmaz.
+ * ! ÖNEMLİ: discord.js ham ReadStream verildiğinde dosya adını YOLUN BASENAME'inden
+ *   üretir (MessagePayload.resolveFile -> findName). Bu yüzden dosya adı AYRI
+ *   olarak açıkça verilir; aksi halde `attachment://<ad>` çözülmez ve görsel
+ *   embed içinde GÖRÜNMEZ. İki değer birbirinden bağımsız olduğu için bu
+ *   ayrım kritiktir.
+ *
+ * Not: Ticket paneli kendi kopyasını (tickets.js) kullanır;
  */
 const fs = require('fs');
 const path = require('path');
@@ -50,7 +56,9 @@ function panelGorseli() {
 function panelDosyalari(g, ilkGonderim) {
   if (!g || g.kaynak !== 'dosya' || !ilkGonderim) return [];
   try {
-    return [fs.createReadStream(g.yol)];
+    // Ad AÇIKÇA verilir: ham ReadStream'de discord.js basename'i kullanır ve bu
+    // ad attachment:// referansıyla örtüşmezse görsel embed içinde görünmez.
+    return [{ attachment: fs.createReadStream(g.yol), name: g.ad }];
   } catch {
     return [];
   }
