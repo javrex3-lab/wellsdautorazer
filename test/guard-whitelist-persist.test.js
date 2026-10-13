@@ -213,6 +213,106 @@ for (const [dosya, ad] of [
 }
 
 /* ================================================================== */
+section('11) GERİ YÜKLEME KAYNAĞI (/guardyukle)');
+
+{
+  const seedYol = path.join(KOK, 'data', 'guard-whitelist-seed.json');
+  check('Tohum dosyası repoda var', fs.existsSync(seedYol));
+
+  const seed = JSON.parse(fs.readFileSync(seedYol, 'utf8'));
+  check('Tohum geçerli JSON', !!seed.kayitlar && Array.isArray(seed.kayitlar));
+  check('Tohum guild_id doğru', seed._guild_id === G, String(seed._guild_id));
+
+  // Kullanıcının verdiği 10 kayıt birebir burada olmalı
+  const beklenen = [
+    ['1056585742731726918', 4],
+    ['1305984973937053818', 4],
+    ['1375758772210761738', 1],
+    ['846509021296459787', 1],
+    ['1264965435594506270', 1],
+    ['1098953616301232219', 1],
+    ['1098944843142676553', 1],
+    ['1070019000593043486', 1],
+    ['733961225276489729', 1],
+    ['1294835692685234216', 1],
+  ];
+  for (const [id, lvl] of beklenen) {
+    const k = seed.kayitlar.find((x) => x.user_id === id);
+    check(`Tohumda ${id} (seviye ${lvl})`, !!k && k.level === lvl, k ? 'seviye=' + k.level : 'YOK');
+  }
+  check('Tohumda tam 10 kayıt', seed.kayitlar.length === 10, String(seed.kayitlar.length));
+  check('Tohumdaki tüm ID\'ler geçerli', seed.kayitlar.every((k) => /^\d{17,20}$/.test(k.user_id)));
+  check('Tohumdaki tüm seviyeler 1-4', seed.kayitlar.every((k) => k.level >= 1 && k.level <= 4));
+}
+
+{
+  const { _tohumOku: tohumOku, _TOHUM_DOSYA: dosya } = require('../src/commands/guardyukle');
+  const t = tohumOku();
+  check('tohumOku() başarılı', t.ok === true, t.hata || '');
+  check('tohumOku() 10 geçerli kayıt döndürüyor', t.kayitlar.length === 10, String(t.kayitlar.length));
+  check('Tohum dosyası doğru yolda', fs.existsSync(dosya), dosya);
+
+  // Bozuk dosya güvenli sekilde reddediliyor
+  const bozuk = path.join(require('os').tmpdir(), 'bozuk-seed-' + Date.now() + '.json');
+  fs.writeFileSync(bozuk, '{ bu json degil', 'utf8');
+  const b = tohumOku(bozuk);
+  check('Bozuk JSON reddediliyor (sessizce geçmiyor)', b.ok === false, JSON.stringify(b));
+  fs.unlinkSync(bozuk);
+
+  const yok = tohumOku(path.join(require('os').tmpdir(), 'olmayan-' + Date.now() + '.json'));
+  check('Eksik dosya reddediliyor', yok.ok === false);
+}
+
+{
+  // Tohum idempotent uygulama: 3 kez calistir, kayit sayisi degismez
+  const probeYeni = path.join(require('os').tmpdir(), 'wlseed-' + Date.now() + '.db');
+  const { _tohumOku: tohumOku } = require('../src/commands/guardyukle');
+  const seed = tohumOku();
+  const { execFileSync } = require('child_process');
+  const yaz = path.join(KOK, 'test', '_wl-seed-step.js');
+  fs.writeFileSync(
+    yaz,
+    "const db=require('../src/database/database');db.initDatabase();" +
+      "const t=require('../src/commands/guardyukle')._tohumOku();" +
+      "let n=0;for(const k of t.kayitlar){if(db.setGuardLevel(process.argv[2],k.id,k.level,'1').created)n++;}" +
+      "const top=db.listWhitelist(process.argv[2]).length;" +
+      "db.closeDatabase();" +
+      "console.log('###JSON###'+JSON.stringify({eklendi:n,toplam:top}));process.exit(0);",
+    'utf8',
+  );
+  const calistir = () => {
+    const ham = execFileSync(process.execPath, [yaz, G], { cwd: KOK, encoding: 'utf8', env: { ...process.env, DB_PATH: probeYeni } });
+    return JSON.parse(ham.split('###JSON###')[1].trim());
+  };
+
+  const r1 = calistir();
+  check('İlk yükleme: 10 kayıt eklendi', r1.eklendi === 10 && r1.toplam === 10, JSON.stringify(r1));
+  const r2 = calistir();
+  check('İkinci yükleme: duplicate yok', r2.eklendi === 0 && r2.toplam === 10, JSON.stringify(r2));
+  const r3 = calistir();
+  check('Üçüncü yükleme: hâlâ 10', r3.eklendi === 0 && r3.toplam === 10, JSON.stringify(r3));
+
+  // Kayitlarin tamami gercekten DBde ve dogru seviyede mi?
+  const kontrol = yeniSurec('oku', probeYeni);
+  const seed2 = tohumOku();
+  const hepsiDogru = seed2.kayitlar.every((k) => kontrol.veri.kayitlar.some((x) => x.user_id === k.id));
+  check('Tohumun tamamı DBde doğru seviyede', kontrol.veri.toplam === 10 && hepsiDogru, JSON.stringify(kontrol.veri));
+
+  fs.unlinkSync(yaz);
+  fs.unlinkSync(probeYeni);
+}
+
+{
+  // Komut SİLME yapmamali
+  const s = fs.readFileSync(path.join(KOK, 'src/commands/guardyukle.js'), 'utf8');
+  check('/guardyukle removeGuard çağırmıyor', !/\bremoveGuard\s*\(/.test(s));
+  check('/guardyukle DELETE çalıştırmıyor', !/DELETE FROM/.test(s));
+  check('/guardyukle idempotent (upsert kullanıyor)', /setGuardLevel/.test(s));
+  check('/guardyukle sonucu doğruluyor', /Doğrulama/.test(s));
+  check('/guardyukle başarıyı doğrulamadan söylemiyor', /getGuardLevel\(interaction\.guildId, k\.id\) === k\.level/.test(s));
+}
+
+/* ================================================================== */
 console.log('\n' + '='.repeat(68));
 console.log('  SONUÇ:  ' + pass + ' başarılı / ' + (pass + fail) + ' toplam  /  ' + fail + ' başarısız');
 console.log('='.repeat(68));

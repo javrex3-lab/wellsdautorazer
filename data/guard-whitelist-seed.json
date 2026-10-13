@@ -1,0 +1,17 @@
+{
+  "_aciklama": "Guard whitelist geri yukleme kaynagi. Railway gibi gecici dosya sistemlerinde veritabani her redeploy'da sifirlanir; bu dosya repoda tutulur ve /guardyukle komutuyla veritabanina geri yuklenir. SILME YAPILMAZ - sadece eksik/guncel kayitlar eklenir.",
+  "_guild_id": "1354465879311777893",
+  "_version": 1,
+  "kayitlar": [
+    { "user_id": "1056585742731726918", "level": 4, "aciklama": "url guard" },
+    { "user_id": "1305984973937053818", "level": 4, "aciklama": "url guard" },
+    { "user_id": "1375758772210761738", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "846509021296459787", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "1264965435594506270", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "1098953616301232219", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "1098944843142676553", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "1070019000593043486", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "733961225276489729", "level": 1, "aciklama": "rol guard" },
+    { "user_id": "1294835692685234216", "level": 1, "aciklama": "rol guard" }
+  ]
+}
