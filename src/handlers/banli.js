@@ -1,27 +1,36 @@
 /**
- * BANLILAR BİLDİRİM SİSTEMİ — akış yöneticisi.
+ * BANLILAR BİLDİRİM SİSTEMİ — akış yöneticisi (sıralı soru akışı).
  *
- * Akış:  /banlılar paneli → 🔨 Banlıyım butonu → Modal (Ban ID / Ban Sebebi / Ban Tarihi)
- *        → doğrulama → bildirim kanalına embed gönderimi → kalıcı DB kaydı
+ * Akış:
+ *   /banlılarpanel paneli → 🔨 "Banlıyım" butonu
+ *      → bot kanalda sorar: 1) Ban ID   2) Ban Sebebi   3) Ban Tarihi
+ *      → kullanıcı her soruya kanala yazarak cevap verir
+ *      → bildirim 1559535039614689362 kanalına gönderilir
  *
  * TASARIM İLKELERİ
- *  - Bildirim, kullanıcının KENDİ bildirdiği bilgidir. Harici bir ban sorgu
- *    kaynağı (Discord/FiveM ban API'si) YOKTUR. Sistem hiçbir yerde banın
- *    gerçekleştiğini "doğrulanmış" gibi sunmaz.
- *  - Mesaj GÖNDERİLMEDEN önce DB'ye kayıt açılır (durum='gonderiliyor').
- *    Gönderim başarısız olursa kayıt 'hata' olarak kapanır → kullanıcıya
- *    yalan söylenmez, ama kalıcı iz kaybolmaz.
- *  - allowedMentions: { parse: [] } + yalnızca bildiren kullanıcı. Sebep
- *    metninden hiçbir şekilde rol/kullanıcı/ everyone PING'i oluşamaz.
- *  - Aynı interaction iki kez işlenmez; aynı kullanıcı+ban-id ikinci kez
- *    kısa sürede gönderim yapamaz (cooldown + DB sayacı).
+ *  - Bu bir OYUN (FiveM) banı bildirimi; Discord banı değil.
+ *  - Ban ID'nin platformu/formatı bize BİLİNMEZ. Oyuncu ne yazarsa yazılmaz
+ *    "kullanıcı bildirimi" olarak saklanır; hiçbir yerde banın gerçekleştiği
+ *    doğrulanmış gibi sunulmaz. Harici ban sorgu kaynağı yoktur.
+ *  - Bildirim, mesaj GÖNDERİLMEDEN önce DB'ye kayıt açılır (gonderiliyor).
+ *    Gönderim başarısızsa kayıt 'hata' olarak kapanır → kalıcı iz kaybolmaz ve
+ *    kullanıcıya "başarılı" yalanı söylenmez.
+ *  - allowedMentions: { parse: [] } + yalnızca bildiren kullanıcı. Kullanıcının
+ *    yazdığı metinden hiçbir şekilde rol/kullanıcı/everyone PING'i oluşamaz.
+ *  - Aynı kullanıcı aynı anda tek form doldurur (tek oturum). Teknik retry
+ *    iki kez bildirim gönderemez (RAM kilidi + DB mesaj_id UNIQUE).
  */
 const { MessageFlags, PermissionFlagsBits } = require('discord.js');
 const {
   CID,
-  buildBildirModal,
+  SORULAR,
+  buildSoruMesaji,
+  buildTekrarMesaji,
+  buildBaslangicMesaji,
   buildBildirimEmbed,
-  buildOnayEmbed,
+  buildOnayMesaji,
+  buildHataMesaji,
+  buildIptalMesaji,
 } = require('../utils/banViews');
 const { buildErrorEmbed } = require('../utils/embeds');
 const config = require('../config');
@@ -34,61 +43,74 @@ const logger = require('../utils/logger');
 
 /** Butona iki kez hızlı basılmasını yakalar (çift tıklama). */
 const BUTON_BEKLEME_MS = 4000;
-/** Aynı kullanıcı + aynı Ban ID için tekrar gönderim yasağı (ms). */
+/** Bir sorudan sonra yanıt için beklenecek süre (ms). */
+const OTURUM_SURE_MS = 5 * 60 * 1000;
+/** Aynı kullanıcı + aynı Ban ID ile tekrar bildirim yasağı (ms). */
 const GONDERIM_YASAK_MS = 20_000;
-/** İşlenmiş interaction id'leri — çift işlem (40060) koruması. */
-const ISLENMIS_TUT = 10 * 60 * 1000;
 
 /* ------------------------------------------------------------------ */
-/* Bellek içi korumalar (RAM)                                          */
+/* Bellek içi oturumlar (RAM)                                          */
 /* ------------------------------------------------------------------ */
 
+/** anahtar: `${guildId}:${userId}` */
+const oturumlar = new Map();
+/** son buton basışı (çift tıklama engeli) */
 const butonSon = new Map();
-const gonderimKilit = new Map();
-const islenmis = new Map();
 
-/** Süresi dolmuş kayıtları temizler — map'ler süresiz büyümez. */
+const anahtarUret = (guildId, userId) => `${guildId}:${userId}`;
+
+/** Süresi dolmuş oturumları temizler — map süresiz büyümez. */
 function _temizle() {
-  const sinir = Date.now() - Math.max(ISLENMIS_TUT, GONDERIM_YASAK_MS);
-  for (const [k, v] of islenmis) if (v < sinir) islenmis.delete(k);
-  for (const [k, v] of gonderimKilit) if (v < Date.now() - GONDERIM_YASAK_MS) gonderimKilit.delete(k);
-  for (const [k, v] of butonSon) if (v < Date.now() - 600_000) butonSon.delete(k);
+  const simdi = Date.now();
+  for (const [k, v] of oturumlar) if (simdi - v.sonZaman > OTURUM_SURE_MS) oturumlar.delete(k);
+  for (const [k, v] of butonSon) if (simdi - v > 600_000) butonSon.delete(k);
 }
 
 /* ------------------------------------------------------------------ */
-/* Doğrulama                                                           */
+/* Yanıt doğrulama                                                     */
 /* ------------------------------------------------------------------ */
+
+/** Kontrol karakteri (satır sonu/tab dışı) ve aşırı uzunluk engellenir. */
+const KONTROL_KAR = /[\u0000-\u001F\u007F]/; // LF/CR/TAB dahil
 
 /**
- * Ban ID biçim kontrolü.
- * Projede "ban ID" kavramı Discord snowflake'idır (/unban `\d{17,20}` çıkarır)
- * ama kullanıcı farklı bir platformdan da bildirebilir; bu yüzden kabul
- * edilen karakterler geniş tutulur. Doğruluk İDDİA EDİLMEZ.
+ * Ban ID — oyuncu istediğini yazabilir. Yalnızca boş/çok uzun/kontrol karakterli
+ * girdiler elenir. Format Dayatılmaz, DOĞRULAMA YAPILMAZ.
  */
-const ID_DESEN = /^[A-Za-z0-9._:-]{3,64}$/;
-
 function banIdGecerliMi(deger) {
   const s = String(deger ?? '').trim();
-  if (!s) return { ok: false, sebep: 'ban_id_bos', mesaj: 'Ban ID alanı boş bırakılamaz.' };
-  if (s.length < 3)
-    return { ok: false, sebep: 'ban_id_kisa', mesaj: 'Ban ID en az 3 karakter olmalıdır.' };
-  if (s.length > 64)
-    return { ok: false, sebep: 'ban_id_uzun', mesaj: 'Ban ID en fazla 64 karakter olabilir.' };
-  if (!ID_DESEN.test(s))
-    return {
-      ok: false,
-      sebep: 'ban_id_gecersiz',
-      mesaj: 'Ban ID yalnızca rakam, harf ve `. _ : -` karakterlerinden oluşmalıdır.',
-    };
-  return { ok: true, deger: s, snowflake: /^\d{17,20}$/.test(s) };
+  if (!s) return { ok: false, sebep: 'ban_id_bos', mesaj: 'Ban ID boş bırakılamaz.' };
+  if (KONTROL_KAR.test(s))
+    return { ok: false, sebep: 'ban_id_karakter', mesaj: 'Ban ID satır sonu veya özel karakter içeremez.' };
+  if (s.length < 2)
+    return { ok: false, sebep: 'ban_id_kisa', mesaj: 'Ban ID en az 2 karakter olmalıdır.' };
+  if (s.length > 128)
+    return { ok: false, sebep: 'ban_id_uzun', mesaj: 'Ban ID en fazla 128 karakter olabilir.' };
+  return { ok: true, deger: s };
 }
 
-/** Tarih kabul biçimi: `Gün.Ay.Yıl Saat:dakika` (ayrılıcı: . / -) */
+/** Ban sebebi — özgür metin. */
+function sebepGecerliMi(deger) {
+  const s = String(deger ?? '').trim();
+  if (!s) return { ok: false, sebep: 'sebep_bos', mesaj: 'Ban sebebi boş bırakılamaz.' };
+  if (KONTROL_KAR.test(s))
+    return { ok: false, sebep: 'sebep_karakter', mesaj: 'Ban sebebi satır sonu veya özel karakter içeremez.' };
+  if (s.length < 2)
+    return { ok: false, sebep: 'sebep_kisa', mesaj: 'Ban sebebi en az 2 karakter olmalıdır.' };
+  if (s.length > 900)
+    return { ok: false, sebep: 'sebep_uzun', mesaj: `Ban sebebi en fazla 900 karakter olabilir (şu an ${s.length}).` };
+  return { ok: true, deger: s };
+}
+
+/**
+ * Tarih kabul biçimi: `Gün.Ay.Yıl Saat:dakika` (ayrılıcı: . / -)
+ * Gerçek bir tarih olmalıdır (31.02 gibi sahte tarihler elenir).
+ */
 const TARIH_DESEN = /^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})(?:[\sT]+(\d{1,2})[:.](\d{2}))?$/;
 
 function tarihGecerliMi(deger) {
   const s = String(deger ?? '').trim();
-  if (!s) return { ok: false, sebep: 'tarih_bos', mesaj: 'Ban tarihi alanı boş bırakılamaz.' };
+  if (!s) return { ok: false, sebep: 'tarih_bos', mesaj: 'Ban tarihi boş bırakılamaz.' };
   if (s.length > 64)
     return { ok: false, sebep: 'tarih_uzun', mesaj: 'Ban tarihi en fazla 64 karakter olabilir.' };
 
@@ -98,7 +120,7 @@ function tarihGecerliMi(deger) {
       ok: false,
       sebep: 'tarih_bicim',
       mesaj:
-        'Tarih bu biçimde olmalıdır: `Gün.Ay.Yıl Saat:dakika`\n' +
+        'Tarih bu biçimde olmalıdır: **Gün.Ay.Yıl Saat:dakika**\n' +
         'Örnekler: `12.10.2026 18:30` · `12.10.2026` · `12/10/2026 18:30`',
     };
 
@@ -107,7 +129,6 @@ function tarihGecerliMi(deger) {
   let yil = Number(m[3]);
   const saat = m[4] === undefined ? null : Number(m[4]);
   const dakika = m[5] === undefined ? null : Number(m[5]);
-
   if (yil < 100) yil += 2000;
 
   if (gun < 1 || gun > 31)
@@ -121,7 +142,6 @@ function tarihGecerliMi(deger) {
   if (dakika !== null && (dakika < 0 || dakika > 59))
     return { ok: false, sebep: 'tarih_dakika', mesaj: 'Dakika 0-59 arasında olmalıdır.' };
 
-  // Gerçekten var olan bir tarih mi? (31.02 gibi sahte tarihleri eler)
   const d = new Date(Date.UTC(yil, ay - 1, gun));
   if (d.getUTCFullYear() !== yil || d.getUTCMonth() !== ay - 1 || d.getUTCDate() !== gun)
     return { ok: false, sebep: 'tarih_gecersiz', mesaj: 'Bu tarih gerçek değil. Lütfen doğru tarihi giriniz.' };
@@ -129,36 +149,34 @@ function tarihGecerliMi(deger) {
   return { ok: true, deger: s };
 }
 
+/** Adım bazında doğrulama. */
+function alanDogrula(adim, deger) {
+  if (adim === 'id') return banIdGecerliMi(deger);
+  if (adim === 'sebep') return sebepGecerliMi(deger);
+  if (adim === 'tarih') return tarihGecerliMi(deger);
+  return { ok: false, sebep: 'bilinmeyen_adim', mesaj: 'Bilinmeyen adım.' };
+}
+
 /**
- * Form doğrulaması — üç alan da zorunludur.
- * Kullanıcının metni DEĞİŞTİRİLMEZ, yalnızca baştaki/sondaki boşluklar temizlenir.
- * @returns {{ok:true, banId:string, sebep:string, tarih:string, hatalar:[]}|{ok:false, mesaj:string, sebep:string}}
+ * Üç alanın tamamını doğrular (testler ve toplu kontrol için).
+ * Kullanıcının metni DEĞİŞTİRİLMEZ, yalnızca kenar boşlukları temizlenir.
  */
 function formDogrula({ banId, sebep, tarih } = {}) {
-  const hatalar = [];
-
   const id = banIdGecerliMi(banId);
-  if (!id.ok) hatalar.push(id);
-
-  const sb = String(sebep ?? '').trim();
-  if (!sb) hatalar.push({ sebep: 'sebep_bos', mesaj: 'Ban sebebi alanı boş bırakılamaz.' });
-  else if (sb.length > 500)
-    hatalar.push({ sebep: 'sebep_uzun', mesaj: 'Ban sebebi en fazla 500 karakter olabilir.' });
-  else if (sb.length < 3)
-    hatalar.push({ sebep: 'sebep_kisa', mesaj: 'Ban sebebi en az 3 karakter olmalıdır.' });
-
+  const sb = sebepGecerliMi(sebep);
   const tr = tarihGecerliMi(tarih);
-  if (!tr.ok) hatalar.push(tr);
-
+  const hatalar = [id, sb, tr].filter((x) => !x.ok);
   if (hatalar.length) {
     return {
       ok: false,
       sebep: hatalar[0].sebep,
-      mesaj: hatalar.length === 1 ? hatalar[0].mesaj : 'Formda eksik/hatalı alanlar var:\n• ' + hatalar.map((x) => x.mesaj.split('\n')[0]).join('\n• '),
+      mesaj:
+        hatalar.length === 1
+          ? hatalar[0].mesaj
+          : 'Eksik/hatalı alanlar var:\n• ' + hatalar.map((x) => x.mesaj.split('\n')[0]).join('\n• '),
     };
   }
-
-  return { ok: true, banId: id.deger, sebep: sb, tarih: tr.deger, hatalar: [] };
+  return { ok: true, banId: id.deger, sebep: sb.deger, tarih: tr.deger, hatalar: [] };
 }
 
 /* ------------------------------------------------------------------ */
@@ -167,7 +185,7 @@ function formDogrula({ banId, sebep, tarih } = {}) {
 
 const KANAL_HATASI = {
   kanal_yapilandirilmamis: 'Bildirim kanalı yapılandırılmamış. Lütfen yetkiliye bildirin.',
-  kanal_bulunamadi: 'Bildirim kanalı bulunamadı. Bilgileriniz kaydedildi ama iletilemedi.',
+  kanal_bulunamadi: 'Bildirim kanalı bulunamadı. Bilgileriniz kayıt altına alındı ama iletilemedi.',
   kanal_tur_hatali: 'Bildirim kanalı bir metin kanalı değil.',
   kanal_gonderilemiyor: 'Bildirim kanalına mesaj gönderilemiyor.',
   yanlis_sunucu: 'Bildirim kanalı bu sunucuya ait değil.',
@@ -220,10 +238,9 @@ async function bildirimKanaliniBul(client, guildId) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 1) Buton → Modal                                                    */
+/* 1) Buton → oturum başlat + 1. soru                                  */
 /* ------------------------------------------------------------------ */
 
-/** 🔨 "Banlıyım" butonu: modalı açar (3sn ACK penceresi içinde). */
 async function handleBildirButton(interaction) {
   try {
     if (!interaction.guildId) {
@@ -233,9 +250,28 @@ async function handleBildirButton(interaction) {
       return true;
     }
 
-    const uid = interaction.user.id;
-    const simdi = Date.now();
     _temizle();
+    const guildId = String(interaction.guildId);
+    const uid = String(interaction.user.id);
+    const simdi = Date.now();
+
+    // Zaten açık bir form var mı?
+    const mevcut = oturumlar.get(anahtarUret(guildId, uid));
+    if (mevcut) {
+      await interaction
+        .reply({
+          embeds: [
+            buildErrorEmbed(
+              'Zaten bir ban bildirim formu dolduruyorsunuz. Bitirin ya da **"iptal"** yazın.',
+            ),
+          ],
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch(() => {});
+      return true;
+    }
+
+    // Çift tıklama engeli
     const son = butonSon.get(uid) || 0;
     if (simdi - son < BUTON_BEKLEME_MS) {
       await interaction
@@ -248,221 +284,196 @@ async function handleBildirButton(interaction) {
     }
     butonSon.set(uid, simdi);
 
-    // showModal() Discord'un modal açma ACK'idir — 3sn içinde çağrılmalı.
-    await interaction.showModal(buildBildirModal());
+    oturumlar.set(anahtarUret(guildId, uid), {
+      guildId,
+      kanalId: String(interaction.channelId),
+      userId: uid,
+      adim: SORULAR[0].adim,
+      veri: {},
+      baslangic: simdi,
+      sonZaman: simdi,
+    });
+
+    await interaction.reply(buildBaslangicMesaji(uid));
+    await interaction.channel.send({ content: buildSoruMesaji(SORULAR[0].adim, uid) });
+
+    logger.info(`[ban] form başladı: ${guildId}/${uid} kanal ${interaction.channelId}`);
     return true;
   } catch (err) {
-    logger.error(`[ban] modal açılamadı (buton) id=${interaction.id}`, err);
+    logger.error(`[ban] oturum başlatılamadı id=${interaction.id}`, err);
     try {
       const payload = {
-        embeds: [buildErrorEmbed('Ban bildirim formu açılamadı. Lütfen tekrar deneyin.')],
+        embeds: [buildErrorEmbed('Ban bildirim formu başlatılamadı. Lütfen tekrar deneyin.')],
         flags: MessageFlags.Ephemeral,
       };
       if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => {});
       else await interaction.reply(payload).catch(() => {});
     } catch {
-      /* interaction süresi dolmuş olabilir — sessiz geçilir ama ASIL hata yukarıda loglandı */
+      /* interaction süresi dolmuş olabilir — ASIL hata yukarıda loglandı */
     }
     return true;
   }
 }
 
 /* ------------------------------------------------------------------ */
-/* 2) Modal gönderimi → doğrulama → bildirim                            */
+/* 2) Kullanıcının cevabı (messageCreate)                             */
 /* ------------------------------------------------------------------ */
 
-async function handleBildirSubmit(interaction) {
-  const iid = String(interaction.id);
-
-  // --- Aynı interaction iki kez işlenmesin (Discord 40060 koruması) ---
+/**
+ * Kanaldaki kullanıcı mesajını kontrol eder; aktif oturum varsa ilerletir.
+ * @returns {Promise<boolean>} true = bu mesaj bir form yanıtıydı
+ */
+async function handleCevap(message) {
   _temizle();
-  if (islenmis.has(iid)) {
-    logger.warn(`[ban] aynı modal submit iki kez geldi, ikincisi yoksayıldı: ${iid}`);
-    return;
+  const guildId = String(message.guildId);
+  const uid = String(message.author?.id);
+  const anahtar = anahtarUret(guildId, uid);
+
+  const oturum = oturumlar.get(anahtar);
+  if (!oturum) return false;
+  if (String(message.channelId) !== oturum.kanalId) return false; // başka kanalda — dokunma
+
+  const metin = String(message.content || '').trim();
+  oturum.sonZaman = Date.now();
+
+  // İptal
+  if (/^iptal$/i.test(metin)) {
+    oturumlar.delete(anahtar);
+    await message.reply({ content: buildIptalMesaji(uid) }).catch(() => {});
+    logger.info(`[ban] form iptal edildi: ${guildId}/${uid}`);
+    return true;
   }
-  islenmis.set(iid, Date.now());
 
-  try {
-    if (!interaction.guildId) {
-      await interaction
-        .reply({ embeds: [buildErrorEmbed('Bu form yalnızca sunucuda kullanılabilir.')], flags: MessageFlags.Ephemeral })
-        .catch(() => {});
-      return;
-    }
+  // Yanıt uygun değil → aynı soru tekrar sorulur
+  const d = alanDogrula(oturum.adim, metin);
+  if (!d.ok) {
+    await message.reply({ content: buildTekrarMesaji(oturum.adim, uid, d.mesaj) }).catch(() => {});
+    return true;
+  }
 
-    // --- Alanları oku ---
-    let banId = '';
-    let sebep = '';
-    let tarih = '';
-    try {
-      banId = interaction.fields.getTextInputValue(CID.ID);
-      sebep = interaction.fields.getTextInputValue(CID.SEBEP);
-      tarih = interaction.fields.getTextInputValue(CID.TARIH);
-    } catch (err) {
-      logger.error(`[ban] modal alanları okunamadı id=${iid}`, err);
-      await interaction
-        .reply({ embeds: [buildErrorEmbed('Form okunamadı. Lütfen tekrar dene.')], flags: MessageFlags.Ephemeral })
-        .catch(() => {});
-      return;
-    }
+  oturum.veri[oturum.adim] = d.deger;
 
-    // --- Doğrulama (kullanıcı metni değiştirilmez) ---
-    const d = formDogrula({ banId, sebep, tarih });
-    if (!d.ok) {
-      logger.info(`[ban] geçersiz form (${interaction.user.id}): ${d.sebep}`);
-      await interaction
-        .reply({ embeds: [buildErrorEmbed(d.mesaj)], flags: MessageFlags.Ephemeral })
-        .catch(() => {});
-      return;
-    }
+  // Sonraki soru
+  const idx = SORULAR.findIndex((s) => s.adim === oturum.adim);
+  if (idx + 1 < SORULAR.length) {
+    oturum.adim = SORULAR[idx + 1].adim;
+    await message.reply({ content: buildSoruMesaji(oturum.adim, uid) }).catch(() => {});
+    return true;
+  }
 
-    const guildId = String(interaction.guildId);
-    const uid = String(interaction.user.id);
-    const anahtar = `${guildId}:${uid}:${d.banId}`;
+  // Son soru bitti → bildirim gönder
+  await _gonder(oturum, message);
+  return true;
+}
 
-    // --- Aynı kullanıcı + aynı Ban ID: kısa sürede ikinci gönderim yok ---
-    if (gonderimKilit.has(anahtar)) {
-      await interaction
-        .reply({
-          embeds: [buildErrorEmbed('Bu bildirim şu anda gönderiliyor. Lütfen biraz bekleyin.')],
-          flags: MessageFlags.Ephemeral,
-        })
-        .catch(() => {});
-      return;
-    }
-    if (db.countRecentBanBildirimi(guildId, uid, d.banId, GONDERIM_YASAK_MS) > 0) {
-      await interaction
-        .reply({
-          embeds: [
-            buildErrorEmbed(
-              `Aynı Ban ID ile kısa süre önce bildirim gönderdiniz. ` +
-                `${Math.round(GONDERIM_YASAK_MS / 1000)} saniye sonra tekrar deneyebilirsiniz.`,
-            ),
-          ],
-          flags: MessageFlags.Ephemeral,
-        })
-        .catch(() => {});
-      return;
-    }
+/* ------------------------------------------------------------------ */
+/* 3) Bildirimi gönder + kalıcı kayıt                                  */
+/* ------------------------------------------------------------------ */
 
-    gonderimKilit.set(anahtar, Date.now());
+async function _gonder(oturum, message) {
+  const anahtar = anahtarUret(oturum.guildId, oturum.userId);
+  const uid = oturum.userId;
+  const guildId = oturum.guildId;
+  const simdi = Date.now();
 
-    // --- 3sn ACK penceresi: yavaş işler için önce defer ---
-    let deferOldu = false;
-    try {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      deferOldu = true;
-    } catch (err) {
-      // 10062 Unknown Interaction: Discord 3sn içinde ACK alamadık.
-      logger.warn(`[ban] defer başarısız id=${iid}: ${err?.code || err?.message}`);
-      gonderimKilit.delete(anahtar);
-      return;
-    }
-    const bitir = async (mesaj, hataMi = false) => {
-      const payload = { embeds: [hataMi ? buildErrorEmbed(mesaj) : mesaj], flags: MessageFlags.Ephemeral };
-      await interaction.editReply(payload).catch((e) => logger.warn(`[ban] editReply: ${e?.code || e?.message}`));
-    };
+  const hataBildir = async (metin) => {
+    oturumlar.delete(anahtar);
+    await message.reply({ content: buildHataMesaji({ userId: uid, metin }) }).catch(() => {});
+  };
 
-    // --- Kanal kontrolü ---
-    const k = await bildirimKanaliniBul(interaction.client, guildId);
-    if (!k.ok) {
-      logger.error(`[ban] bildirim kanalı kullanılamaz (${k.sebep}${k.detay ? ' / ' + k.detay : ''})`);
-      gonderimKilit.delete(anahtar);
-      await bitir(KANAL_HATASI[k.sebep] || 'Bildirim gönderilemedi.', true);
-      return;
-    }
+  // --- Kanal kontrolü ---
+  const k = await bildirimKanaliniBul(message.client, guildId);
+  if (!k.ok) {
+    logger.error(`[ban] bildirim kanalı kullanılamaz (${k.sebep}${k.detay ? ' / ' + k.detay : ''})`);
+    return hataBildir(KANAL_HATASI[k.sebep] || 'Bildirim gönderilemedi.');
+  }
 
-    // --- DB kaydı ÖNCE (mesaj gönderilmeden) ---
-    const simdi = Date.now();
-    const kayit = db.createBanBildirimi({
-      guildId,
-      userId: uid,
-      banId: d.banId,
-      sebep: d.sebep,
-      banTarih: d.tarih,
-      kanalId: k.kanal.id,
-      now: simdi,
-    });
-    if (!kayit.ok) {
-      gonderimKilit.delete(anahtar);
-      await bitir('Bildirim kaydedilemedi, bu yüzden gönderilmedi. Lütfen tekrar deneyin.', true);
-      return;
-    }
-
-    // --- Bildirimi gönder ---
-    let mesaj = null;
-    let hata = null;
-    try {
-      mesaj = await k.kanal.send({
-        embeds: [
-          buildBildirimEmbed({
-            userId: uid,
-            banId: d.banId,
-            reason: d.sebep,
-            banDate: d.tarih,
-            now: simdi,
-          }),
-        ],
-        // SADECE bildiren kullanıcı etiketlenebilir.
-        allowedMentions: { parse: [], users: [uid], roles: [], repliedUser: false },
-      });
-    } catch (err) {
-      hata = err;
-    }
-
-    if (!mesaj) {
-      const hataKodu = String(hata?.code || hata?.message || hata).slice(0, 200);
-      db.completeBanBildirimi(kayit.id, { mesajId: null, durum: 'hata', hata: hataKodu });
-      logger.error(`[ban] bildirim gönderilemedi (${k.kanal.id}) user=${uid}: ${hataKodu}`);
-      gonderimKilit.delete(anahtar);
-      await bitir(
-        'Bildiriminiz kanala iletilemedi. Hata kayıt altına alındı, lütfen biraz sonra tekrar deneyin.',
-        true,
-      );
-      return;
-    }
-
-    // --- Gönderildi: kaydı tamamla ---
-    const u = db.completeBanBildirimi(kayit.id, { mesajId: mesaj.id, durum: 'gonderildi' });
-    gonderimKilit.delete(anahtar);
-
-    logger.success(
-      `/banlılar bildirimi gönderildi: ${uid} → kanal ${k.kanal.id}, mesaj ${mesaj.id} (kayıt #${kayit.id})`,
+  // --- Aynı kullanıcı + aynı Ban ID kısa süre içinde tekrar bildirim yapamaz ---
+  if (db.countRecentBanBildirimi(guildId, uid, oturum.veri.id, GONDERIM_YASAK_MS) > 0) {
+    return hataBildir(
+      `Aynı Ban ID ile kısa süre önce bildirim gönderdiniz. ${Math.round(
+        GONDERIM_YASAK_MS / 1000,
+      )} saniye sonra tekrar deneyebilirsiniz.`,
     );
-
-    if (!u.ok) {
-      // Mesaj GİDERİLDİ ama kayıt tamamlanamadı — bunu gizlemiyoruz.
-      logger.error(`[ban] kayıt #${kayit.id} tamamlanamadı (mesaj gönderildi: ${mesaj.id})`);
-      await bitir('Bildiriminiz kanala iletildi ancak kaydı tamamlanamadı. Yetkiliye bildirin.', true);
-      return;
-    }
-
-    if (deferOldu) await bitir(buildOnayEmbed({ userId: uid }));
-  } catch (err) {
-    logger.error(`[ban] modal submit hatası id=${iid}`, err);
-    try {
-      const payload = {
-        embeds: [buildErrorEmbed('Bildirim işlenirken bir hata oluştu. Lütfen tekrar deneyin.')],
-        flags: MessageFlags.Ephemeral,
-      };
-      if (interaction.replied || interaction.deferred) await interaction.followUp(payload).catch(() => {});
-      else if (interaction.isRepliable?.()) await interaction.reply(payload).catch(() => {});
-    } catch {
-      /* interaction süresi dolmuş olabilir — ASIL hata yukarıda loglandı */
-    }
   }
+
+  // --- DB kaydı ÖNCE (mesaj gönderilmeden) ---
+  const kayit = db.createBanBildirimi({
+    guildId,
+    userId: uid,
+    banId: oturum.veri.id,
+    sebep: oturum.veri.sebep,
+    banTarih: oturum.veri.tarih,
+    kanalId: k.kanal.id,
+    now: simdi,
+  });
+  if (!kayit.ok) {
+    return hataBildir('Bildirim kaydedilemedi, bu yüzden gönderilmedi. Lütfen tekrar deneyin.');
+  }
+
+  // --- Bildirimi gönder ---
+  let mesaj = null;
+  let hata = null;
+  try {
+    mesaj = await k.kanal.send({
+      embeds: [
+        buildBildirimEmbed({
+          userId: uid,
+          banId: oturum.veri.id,
+          sebep: oturum.veri.sebep,
+          tarih: oturum.veri.tarih,
+          now: simdi,
+        }),
+      ],
+      // SADECE bildiren kullanıcı etiketlenebilir.
+      allowedMentions: { parse: [], users: [uid], roles: [], repliedUser: false },
+    });
+  } catch (err) {
+    hata = err;
+  }
+
+  if (!mesaj) {
+    const hataKodu = String(hata?.code || hata?.message || hata).slice(0, 200);
+    db.completeBanBildirimi(kayit.id, { mesajId: null, durum: 'hata', hata: hataKodu });
+    logger.error(`[ban] bildirim gönderilemedi (${k.kanal.id}) user=${uid}: ${hataKodu}`);
+    return hataBildir('Bildiriminiz kanala iletilemedi. Hata kayıt altına alındı, lütfen biraz sonra tekrar deneyin.');
+  }
+
+  // --- Gönderildi: kaydı tamamla ---
+  const u = db.completeBanBildirimi(kayit.id, { mesajId: mesaj.id, durum: 'gonderildi' });
+  oturumlar.delete(anahtar);
+
+  logger.success(
+    `/banlılarpanel bildirimi gönderildi: ${uid} → kanal ${k.kanal.id}, mesaj ${mesaj.id} (kayıt #${kayit.id})`,
+  );
+
+  if (!u.ok) {
+    logger.error(`[ban] kayıt #${kayit.id} tamamlanamadı (mesaj gönderildi: ${mesaj.id})`);
+    return hataBildir('Bildiriminiz kanala iletildi ancak kaydı tamamlanamadı. Yetkiliye bildirin.');
+  }
+
+  await message
+    .reply({ content: buildOnayMesaji({ userId: uid, kanalId: k.kanal.id }) })
+    .catch(() => {});
+  return true;
 }
 
 module.exports = {
   CID,
+  SORULAR,
   BUTON_BEKLEME_MS,
+  OTURUM_SURE_MS,
   GONDERIM_YASAK_MS,
   banIdGecerliMi,
+  sebepGecerliMi,
   tarihGecerliMi,
+  alanDogrula,
   formDogrula,
   bildirimKanaliniBul,
   handleBildirButton,
-  handleBildirSubmit,
+  handleCevap,
   KANAL_HATASI,
+  oturumlar,
+  butonSon,
   _temizle,
 };

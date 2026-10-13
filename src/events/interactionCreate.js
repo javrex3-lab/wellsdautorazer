@@ -9,7 +9,6 @@ const { hasCommandAccess, canManageRoles, canManageBan } = require('../utils/per
 const { canManageGuard } = require('../guard/permissions');
 const { handleButton } = require('../handlers/buttonHandler');
 const mz = require('../handlers/mazeret');
-  const ban = require('../handlers/banli');
 const logger = require('../utils/logger');
 
 function labelOf(interaction) {
@@ -70,10 +69,7 @@ module.exports = {
 
       // --- Modal gönderimleri (mazeret sebebi) ---
       if (interaction.isModalSubmit()) {
-          /* --- Banlilar bildirim formu (3 zorunlu alan) --- */
-          if (interaction.customId === ban.CID.MODAL) {
-            await ban.handleBildirSubmit(interaction);
-          } else if (interaction.customId === mz.CID.SEBEP) {
+          if (interaction.customId === mz.CID.SEBEP) {
           await mz.handleSebepSubmit(interaction);
         } else {
           logger.warn(`Bilinmeyen modal customId: ${interaction.customId}`);

@@ -1,5 +1,5 @@
 /**
- * /banlılar - Banlılar bildirim panelini gönderir (yalnızca yetkililer).
+ * /banlılarpanel - Banlılar bildirim panelini gönderir (yalnızca yetkililer).
  *
  * Panelde TEK buton vardır: 🔨 Banlıyım
  *   → Modal (Ban ID / Ban Sebebi / Ban Tarihi) → doğrulama
@@ -23,7 +23,7 @@ module.exports = {
   // Yetki kontrolü komutun kendi içinde (canManageTickets) + global kapıdan muaf.
   openToRoleManagers: true,
   data: new SlashCommandBuilder()
-    .setName('banlılar')
+    .setName('banlılarpanel')
     .setDescription('Banlılar bildirim panelini gönderir (yalnızca yetkililer).')
     .addChannelOption((opt) =>
       opt
@@ -107,7 +107,7 @@ module.exports = {
       }
 
       const toplam = getBanBildirimleri(guildId, 1).length;
-      logger.success(`/banlılar: panel ${eylem} (kanal ${hedef.id}, mesaj ${mesaj.id})`);
+      logger.success(`/banlılarpanel: panel ${eylem} (kanal ${hedef.id}, mesaj ${mesaj.id})`);
 
       return interaction
         .reply({
@@ -124,7 +124,7 @@ module.exports = {
         })
         .catch(() => {});
     } catch (err) {
-      logger.error('Interaction failed: /banlılar.', err);
+      logger.error('Interaction failed: /banlılarpanel.', err);
       const payload = {
         embeds: [buildErrorEmbed('Panel gönderilirken bir hata oluştu.')],
         flags: MessageFlags.Ephemeral,
