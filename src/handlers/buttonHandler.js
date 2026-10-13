@@ -94,7 +94,11 @@ async function handleButton(interaction) {
       /* ================= BANLILAR BILDIRIM SISTEMI ================= */
     // Tum bn_* butonlari (Banliyim / yazma penceresi / tarih secimi / iptal)
     // tek noktadan yonlendirilir. Islenmediyse false doner.
-    if (ban.handleEtkilesim(interaction)) return true;
+    // ! handleEtkilesim ASYNC bir fonksiyondur; await YAZILMAZSA her zaman bir
+    // Promise doner ve Promise her zaman truthy oldugu icin bu satir TUM butonlari
+    // (ingame / aktiflik / quit_roles / fivem_p_*) yutar: interactiona yanit verilmez,
+    // DB yazilmaz, mesaj guncellenmez ve Discord 3 sn sonra hata gosterir.
+    if (await ban.handleEtkilesim(interaction)) return true;
     /* ============================================================ */
 
 if (customId === 'quit_roles') {
