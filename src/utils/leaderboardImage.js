@@ -16,33 +16,53 @@ const fs = require('fs');
 const path = require('path');
 
 /* ------------------------------------------------------------------ */
-/* Yazı tipi — Linux imajlarında sistem fontu olmayabilir.             */
+/* Yazı tipi                                                            */
 /* ------------------------------------------------------------------ */
+/*
+ * KRİTİK: Railway (Linux) imajlarında SİSTEM FONTU YOKTUR. `sans-serif`
+ * çözümlenemez ve @napi-rs/canvas sessizce HİÇBİR ŞEY çizmez — görsel boş
+ * çıkar (bu hata yaşandı). Bu yüzden depoya GÖMÜLÜ bir font konur.
+ *
+ * Font: Inter Variable — SIL Open Font License 1.1 (OFL), yeniden
+ * dağıtılabilir, Türkçe (Ş Ğ Ü İ Ö Ç ş ğ ü ı ö ç) tam destekli.
+ * Lisans: assets/font/OFL.txt
+ *
+ * Font bulunamazsa sistem fontuna düşülür; o da yoksa görsel ÜRETİLMEZ ve
+ * çağırana hata fırlatılır (sessiz, yazısız resim üretmekten iyidir).
+ */
+const GOMULU_FONT = 'WellsdFont';
+const FONT_DOSYASI = path.join(__dirname, '..', '..', 'assets', 'font', 'InterVariable.ttf');
 
-const VARSAYILAN_FONT = 'sans-serif';
-let FONT_KULLANILDI = VARSAYILAN_FONT;
+let FONT_KULLANILDI = null;
 
-/** Depoda varsa gömülü fontu kaydeder; yoksa sistem fontuna düşer. */
+/**
+ * Gömülü fontu kaydeder.
+ * @returns {string|null} kullanılacak font ailesi; hiç font yoksa null
+ */
 function fontuHazirla() {
-  const adaylar = [
-    path.join(__dirname, '..', '..', 'assets', 'font.ttf'),
-    path.join(__dirname, '..', '..', 'assets', 'font.otf'),
-  ];
-  for (const p of adaylar) {
-    try {
-      if (fs.existsSync(p)) {
-        if (GlobalFonts.registerFromPath(p, 'WellsdFont')) {
-          FONT_KULLANILDI = 'WellsdFont';
-          return FONT_KULLANILDI;
-        }
+  try {
+    if (fs.existsSync(FONT_DOSYASI) && GlobalFonts.registerFromPath(FONT_DOSYASI, GOMULU_FONT)) {
+      const varMi = (GlobalFonts.families || []).some((f) => (f.family || f) === GOMULU_FONT);
+      if (varMi) {
+        FONT_KULLANILDI = GOMULU_FONT;
+        return FONT_KULLANILDI;
       }
-    } catch {
-      /* varsayılana düş */
     }
+  } catch (err) {
+    console.error(`[leaderboard] Gömülü font yüklenemedi: ${err?.message || err}`);
   }
-  return FONT_KULLANILDI;
+  // Yedek: sistemde herhangi bir aile varsa ona düş.
+  const aileler = (GlobalFonts.families || []).map((f) => f.family || f).filter(Boolean);
+  if (aileler.length) {
+    FONT_KULLANILDI = aileler[0];
+    return FONT_KULLANILDI;
+  }
+  FONT_KULLANILDI = null;
+  return null;
 }
-fontuHazirla();
+
+/** `bold 30px` biçiminde font tanımı üretir. */
+const F = (spec) => `${spec} "${FONT_KULLANILDI || 'sans-serif'}"`;
 
 /* ------------------------------------------------------------------ */
 /* Sabitler                                                            */
@@ -147,7 +167,7 @@ function basHarfCiz(ctx, ad, cx, cy, r) {
 
   ctx.save();
   ctx.fillStyle = RENK.beyaz;
-  ctx.font = `bold ${Math.round(r * 1.0)}px ${FONT_KULLANILDI}`;
+  ctx.font = F(`bold ${Math.round(r * 1.0)}px`);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const harf = String(ad || '?').trim().charAt(0).toUpperCase() || '?';
@@ -213,7 +233,7 @@ function baslikCiz(ctx, W) {
   ctx.textAlign = 'center';
 
   const marka = 'W E L L S D A U T O R A Z E R';
-  ctx.font = `600 20px ${FONT_KULLANILDI}`;
+  ctx.font = F("600 20px");
   const mw = ctx.measureText(marka).width + 46;
   yuvarlakDikdortgen(ctx, (W - mw) / 2, 44, mw, 40, 20);
   ctx.fillStyle = 'rgba(124,92,255,0.12)';
@@ -225,7 +245,7 @@ function baslikCiz(ctx, W) {
   ctx.textBaseline = 'middle';
   ctx.fillText(marka, W / 2, 65);
 
-  ctx.font = `bold 74px ${FONT_KULLANILDI}`;
+  ctx.font = F("bold 74px");
   const grad = ctx.createLinearGradient(0, 118, 0, 190);
   grad.addColorStop(0, '#FFFFFF');
   grad.addColorStop(1, RENK.mor);
@@ -240,7 +260,7 @@ function baslikCiz(ctx, W) {
   ctx.lineTo(W - G.kenar, 212);
   ctx.stroke();
 
-  ctx.font = `500 22px ${FONT_KULLANILDI}`;
+  ctx.font = F("500 22px");
   ctx.fillStyle = RENK.gri;
   ctx.fillText('En çok ticket sahiplenen yetkililer', W / 2, 248);
   ctx.restore();
@@ -300,13 +320,13 @@ function satirZeminCiz(ctx, i) {
     ctx.fillStyle = ng;
     ctx.fill();
     ctx.fillStyle = i === 1 ? '#1A1F2B' : '#1A1408';
-    ctx.font = `bold 34px ${FONT_KULLANILDI}`;
+    ctx.font = F("bold 34px");
   } else {
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
     yuvarlakDikdortgen(ctx, nx - 26, y + h / 2 - 26, 52, 52, 14);
     ctx.fill();
     ctx.fillStyle = RENK.gri;
-    ctx.font = `bold 26px ${FONT_KULLANILDI}`;
+    ctx.font = F("bold 26px");
   }
   ctx.fillText(String(i + 1), nx, y + h / 2 + 1);
   ctx.restore();
@@ -324,6 +344,17 @@ function satirZeminCiz(ctx, i) {
  * @returns {Promise<Buffer>} PNG
  */
 async function leaderboardCiz(satirlar, opts = {}) {
+  // Font kaydi ilk kullanimda yapilir; dosya coktan yuklenmis olabilir.
+  if (!FONT_KULLANILDI) fontuHazirla();
+  if (!FONT_KULLANILDI) {
+    // Yazisiz (bos) resim uretmektense ACIKCA hata ver — cagiran taraf
+    // kontrollu metin yedegine dusabilir.
+    throw new Error(
+      'Kullanilabilir yazi tipi yok: gomulu font yuklenemedi ve sistemde font bulunamadi. ' +
+        'Bu genelde sunucuda font kutuphanesi bulunmadiginda olur (assets/font klasorunu kontrol et).',
+    );
+  }
+
   const liste = Array.isArray(satirlar) ? satirlar.slice(0, 10) : [];
   // Boş durumda tek satırlık yerine içerik bloğu için yer ayrılır; aksi halde
   // metin tuvalin altına taşıp alt bilgiyle çakışır.
@@ -360,10 +391,10 @@ async function leaderboardCiz(satirlar, opts = {}) {
     });
 
     ctx.textBaseline = 'middle';
-    ctx.font = `bold 42px ${FONT_KULLANILDI}`;
+    ctx.font = F("bold 42px");
     ctx.fillStyle = RENK.beyaz;
     ctx.fillText('Henüz veri yok', cx, cy + 44);
-    ctx.font = `500 24px ${FONT_KULLANILDI}`;
+    ctx.font = F("500 24px");
     ctx.fillStyle = RENK.gri;
     ctx.fillText('Henüz kaydedilmiş ticket sahiplenme istatistiği bulunmuyor.', cx, cy + 92);
     ctx.restore();
@@ -384,7 +415,7 @@ async function leaderboardCiz(satirlar, opts = {}) {
     ctx.save();
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.font = `bold 30px ${FONT_KULLANILDI}`;
+    ctx.font = F("bold 30px");
     ctx.fillStyle = i < 3 ? '#FFFFFF' : '#E4E8F0';
     ctx.fillText(
       metinKirp(ctx, String(s.adGorsel || s.ad || 'Bilinmeyen'), 380),
@@ -392,7 +423,7 @@ async function leaderboardCiz(satirlar, opts = {}) {
       k.medyax + 4,
     );
 
-    ctx.font = `500 19px ${FONT_KULLANILDI}`;
+    ctx.font = F("500 19px");
     ctx.fillStyle = RENK.griKoyu;
     const alt = s.ad && s.adGorsel && s.ad !== s.adGorsel ? `${s.adGorsel}  •  ${s.user_id}` : String(s.user_id);
     ctx.fillText(metinKirp(ctx, alt, 380), k.x + 214, k.medyax + 32);
@@ -403,14 +434,14 @@ async function leaderboardCiz(satirlar, opts = {}) {
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     const sayi = String(s.claimed_count);
-    ctx.font = `bold 46px ${FONT_KULLANILDI}`;
+    ctx.font = F("bold 46px");
     const sg = ctx.createLinearGradient(k.x + k.w - 250, k.medyax - 30, k.x + k.w - 90, k.medyax + 30);
     sg.addColorStop(0, madalyaRengi(i));
     sg.addColorStop(1, i === 0 ? RENK.altinKoyu : i === 1 ? RENK.gumusKoyu : i === 2 ? RENK.bronzKoyu : RENK.morKoyu);
     ctx.fillStyle = sg;
     ctx.fillText(sayi, k.x + k.w - 96, k.medyax);
 
-    ctx.font = `600 16px ${FONT_KULLANILDI}`;
+    ctx.font = F("600 16px");
     ctx.fillStyle = RENK.griKoyu;
     ctx.fillText('TICKET', k.x + k.w - 42, k.medyax + 30);
     ctx.restore();
@@ -420,7 +451,7 @@ async function leaderboardCiz(satirlar, opts = {}) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `600 20px ${FONT_KULLANILDI}`;
+  ctx.font = F("600 20px");
   ctx.fillStyle = RENK.griKoyu;
   const altSatir =
     (opts.guildName ? opts.guildName + '  •  ' : '') +
@@ -428,7 +459,7 @@ async function leaderboardCiz(satirlar, opts = {}) {
     (opts.toplam ? `  •  Toplam ${opts.toplam} sahiplenme` : '');
   ctx.fillText(altSatir, G.W / 2, H - 50);
 
-  ctx.font = `500 15px ${FONT_KULLANILDI}`;
+  ctx.font = F("500 15px");
   ctx.fillStyle = 'rgba(139,148,168,0.55)';
   ctx.fillText('WellsdAutorazer • Ticket Sahiplenme Sistemi', G.W / 2, H - 26);
   ctx.restore();
@@ -436,4 +467,4 @@ async function leaderboardCiz(satirlar, opts = {}) {
   return canvas.toBuffer('image/png');
 }
 
-module.exports = { leaderboardCiz, avatarYukle, madalyaRengi, G, RENK };
+module.exports = { leaderboardCiz, avatarYukle, madalyaRengi, fontuHazirla, fontDosyasi: FONT_DOSYASI, G, RENK };

@@ -16,6 +16,7 @@ const tickets = require('../src/handlers/tickets');
 const views = require('../src/utils/ticketViews');
 const top = require('../src/commands/ticketop');
 const lb = require('../src/utils/leaderboardImage');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 
 const G = '1354465879311777893';
 const G2 = '999999999999999999';
@@ -378,6 +379,33 @@ function ac(kind, ownerId) {
     check('10) Boş avatar URL çökertmiyor', bosUrl === null);
 
     check('10) Madalya renkleri (altın/gümüş/bronz)', lb.madalyaRengi(0) === '#F5C451' && lb.madalyaRengi(1) === '#C7D0DE' && lb.madalyaRengi(2) === '#CD7F32');
+
+    yaz('  \n---- GÖMÜLÜ FONT (Linux/Railway yazısız resim sorunu) ----');
+    const fontYol = path.join(KOK, "assets", "font", "InterVariable.ttf");
+    check("Gömülü font dosyası repoda", fs.existsSync(fontYol), fontYol);
+    check("Gömülü font lisansı (OFL) repoda", fs.existsSync(path.join(KOK, "assets", "font", "OFL.txt")));
+    check("Font 100 KB üzerinde (beklenen içerik)", fs.existsSync(fontYol) && fs.statSync(fontYol).size > 100_000);
+    const secilen = lb.fontuHazirla();
+    check("Font kaydedildi", typeof secilen === "string" && secilen.length > 0, String(secilen));
+    check("Kayıtlı aileler arasında", (GlobalFonts.families || []).some((f) => (f.family || f) === secilen), String(secilen));
+    {
+      const cv = createCanvas(10, 10);
+      const cx = cv.getContext("2d");
+      const METIN = "TICKET LEADERBOARD Şğüıöç";
+      cx.font = `40px "${secilen}"`;
+      const gomulu = cx.measureText(METIN).width;
+      cx.font = '40px "KesinlikleVarOlmayanFontAdi123"';
+      const yedek = cx.measureText(METIN).width;
+      check("Gömülü font GERÇEKTEN kullanılıyor (sistem yedeğine düşmüyor)", Math.abs(gomulu - yedek) > 1, `${gomulu} vs ${yedek}`);
+      cx.font = `40px "${secilen}"`;
+      const turkce = cx.measureText("ŞĞÜİÖÇ").width;
+      const latin = cx.measureText("AAAAAA").width;
+      check("Türkçe glyph'leri mevcut (ŞĞÜİÖÇ)", turkce > latin * 0.8, `${Math.round(turkce)} vs ${Math.round(latin)}`);
+    }
+    const kaynak = fs.readFileSync(path.join(KOK, "src/utils/leaderboardImage.js"), "utf8");
+    check("Kaynak fontu zorunlu kılıyor (font yoksa hata)", kaynak.includes("Kullanilabilir yazi tipi yok") && kaynak.includes("throw new Error"));
+    check("Tüm ctx.font çağrıları F() yardımcısını kullanıyor", !/ctx\.font\s*=\s*`[^`]*px`/.test(kaynak), "ham px font tanımı kaldı");
+    check("İpucu: font dosyası hata mesajında geçiyor", /assets/.test(kaynak));
 
     // 11) Restart sonrası korunma
     const oncekiA = db.getTicketClaimCount(G, STAFF_A);
