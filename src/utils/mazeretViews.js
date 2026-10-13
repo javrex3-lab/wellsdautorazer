@@ -218,10 +218,67 @@ function buildKayitOnayEmbed({ rec, sureLabel }) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Aktif mazeretliler — referans düzen:
+ *   1) ⬇️ @kullanıcı — Süre: 3 gün
+ *      ↳ Sebep: Hastane randevum var
+ *      ↳ Bitiş: <t:...:R>
+ *
+ * Sebep guvenliMetin() ile sanitize edilir (mention PING oluşturmaz).
+ * Sığmayan kayıt yeni sayfaya taşınır — hiçbir kayıt kaybolmaz.
+ *
  * @param {Array} rows aktif kayıtlar
- * @param {{page:number, pageCount:number, now:number}} o
- * @returns {{embed:EmbedBuilder, toplamSayfa:number}} her zaman bu tipi döner
+ * @param {{now:number}} o
+ * @returns {{embed:EmbedBuilder, toplamSayfa:number, sayfa:number}}
  */
+function buildMazeretliListesiEmbed(rows = [], { now = Date.now() } = {}) {
+  const embed = new EmbedBuilder()
+    .setColor(config.colors.mazeret)
+    .setTitle('Aktif Mazeretli Memurlar')
+    .setDescription('Aşağıda departman bünyesinde anlık olarak mazereti (izinli) sayılan memurları görebilirsiniz.');
+
+  if (!rows.length) {
+    embed.setDescription(
+      'Aşağıda departman bünyesinde anlık olarak mazereti (izinli) sayılan memurları görebilirsiniz.\n\n' +
+      'Şu anda aktif mazeretli kullanıcı bulunmuyor.'
+    );
+    embed.setFooter({ text: 'Panel otomatik güncellenir' });
+    return { embed, toplamSayfa: 1, sayfa: 1 };
+  }
+
+  const LIM = 3800;
+  const blok = (r, no) =>
+    `**${no}) ⬇️** <@${r.user_id}> — **Süre:** ${sureMetni(r.duration_ms)}\n` +
+    `　　↳ **Sebep:** ${guvenliMetin(r.reason, 300)}\n` +
+    `　　↳ **Bitiş:** <t:${Math.floor(r.expires_at / 1000)}:R>`;
+
+  const sayfalar = [];
+  let cur = [];
+  let len = 0;
+  rows.forEach((r, i) => {
+    const b = blok(r, i + 1);
+    if (len + b.length > LIM && cur.length) {
+      sayfalar.push(cur);
+      cur = [];
+      len = 0;
+    }
+    cur.push(b);
+    len += b.length + 2;
+  });
+  if (cur.length) sayfalar.push(cur);
+
+  const toplamSayfa = sayfalar.length;
+  embed.setDescription(
+    'Aşağıda departman bünyesinde anlık olarak mazereti (izinli) sayılan memurları görebilirsiniz.\n\n' +
+    sayfalar[0].join('\n\n')
+  );
+  embed.setFooter({
+    text:
+      `Aktif: ${rows.length} kişi${toplamSayfa > 1 ? ` · Sayfa 1/${toplamSayfa}` : ''} · ` +
+      `Son güncelleme ${new Date(now).toLocaleString('tr-TR')}`,
+  });
+  return { embed, toplamSayfa, sayfa: 1 };
+}
+
 /**
  * AKTİF MAZERETLİ MEMURLAR — merkezi panel (sayfalı).
  *
@@ -321,6 +378,7 @@ module.exports = {
   buildSureSecildiEmbed,
   buildSebepModal,
   buildKayitOnayEmbed,
+  buildMazeretliListesiEmbed,
   buildAktifPanelEmbed,
   buildSayfalamaRow,
 };
