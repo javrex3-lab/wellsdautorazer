@@ -323,7 +323,147 @@ function getAktiflikList(messageId) {
   }
 }
 
+  /* ================================================================== */
+  /* BANLILAR BİLDİRİM SİSTEMİ                                            */
+  /* ================================================================== */
+
+  /**
+   * Bildirim kaydı oluşturur (mesaj gönderilmeden ÖNCE, durum="gonderiliyor").
+   * Böylece kanal gönderimi başarısız olsa bile kalıcı iz kalır ve kullanıcıya
+   * "başarılı" yalanı söylenmez.
+   */
+  function createBanBildirimi({ guildId, userId, banId, sebep, banTarih, kanalId, now }) {
+    try {
+      const ts0 = Number(now) || Date.now();
+      const res = getDb()
+        .prepare(
+          `INSERT INTO ban_bildirimleri
+             (guild_id, user_id, ban_id, ban_sebep, ban_tarih, bildirim_zamani,
+              kanal_id, mesaj_id, durum, hata, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'gonderiliyor', NULL, ?)`
+        )
+        .run(
+          String(guildId),
+          String(userId),
+          String(banId),
+          String(sebep),
+          String(banTarih),
+          ts0,
+          String(kanalId),
+          ts0
+        );
+      return { ok: true, id: Number(res.lastInsertRowid) };
+    } catch (err) {
+      logger.error(`[DB] createBanBildirimi failed: ${guildId}/${userId}`, err);
+      return { ok: false, error: "db_hatasi" };
+    }
+  }
+
+  /** Gönderim sonucunu kaydeder (mesaj id + durum). */
+  function completeBanBildirimi(id, { mesajId, durum, hata = null }) {
+    try {
+      const res = getDb()
+        .prepare('UPDATE ban_bildirimleri SET mesaj_id = ?, durum = ?, hata = ? WHERE id = ?')
+        .run(mesajId ? String(mesajId) : null, String(durum), hata ? String(hata) : null, Number(id));
+      return { ok: true, changed: Number(res.changes) };
+    } catch (err) {
+      logger.error(`[DB] completeBanBildirimi failed: ${id}`, err);
+      return { ok: false, error: "db_hatasi" };
+    }
+  }
+
+  function getBanBildirimi(id) {
+    try {
+      return getDb().prepare("SELECT * FROM ban_bildirimleri WHERE id = ?").get(Number(id)) || null;
+    } catch (err) {
+      logger.error(`[DB] getBanBildirimi failed: ${id}`, err);
+      return null;
+    }
+  }
+
+  /**
+   * 'gonderiliyor' durumunda takılı kalan kayıtları döndürür (saatlik süre).
+   * Bot gönderimden sonra çöktüyse bu satırlar kalıcı iz olarak durur.
+   */
+  function getBanBildirimiAskida(guildId, eskiMs = 3_600_000) {
+    try {
+      return getDb()
+        .prepare("SELECT * FROM ban_bildirimleri WHERE guild_id = ? AND durum = 'gonderiliyor' AND created_at < ?")
+        .all(String(guildId), Date.now() - Number(eskiMs));
+    } catch (err) {
+      logger.error(`[DB] getBanBildirimiAskida failed: ${guildId}`, err);
+      return [];
+    }
+  }
+
+  /** Son bildirimler (yeniden eskiye). */
+  function getBanBildirimleri(guildId, limit = 50) {
+    try {
+      const n = Math.min(500, Math.max(1, Number(limit) || 50));
+      return getDb()
+        .prepare("SELECT * FROM ban_bildirimleri WHERE guild_id = ? ORDER BY id DESC LIMIT ?")
+        .all(String(guildId), n);
+    } catch (err) {
+      logger.error(`[DB] getBanBildirimleri failed: ${guildId}`, err);
+      return [];
+    }
+  }
+
+  /**
+   * Kullanıcının belirtilen süre içinde aynı Ban ID ile kaç bildirim yaptığını
+   * sayar — çift gönderim (rate-limit) kontrolü için.
+   */
+  function countRecentBanBildirimi(guildId, userId, banId, pencereMs) {
+    try {
+      const row = getDb()
+        .prepare("SELECT COUNT(*) AS c FROM ban_bildirimleri WHERE guild_id = ? AND user_id = ? AND ban_id = ? AND created_at >= ?")
+        .get(String(guildId), String(userId), String(banId), Date.now() - Number(pencereMs));
+      return Number(row?.c || 0);
+    } catch (err) {
+      logger.error(`[DB] countRecentBanBildirimi failed: ${guildId}/${userId}`, err);
+      return 0;
+    }
+  }
+
+  /** Panel mesaj kaydı (duplicate panel engeli). */
+  function getBanPanel(guildId) {
+    try {
+      return getDb().prepare("SELECT * FROM ban_panels WHERE guild_id = ?").get(String(guildId)) || null;
+    } catch (err) {
+      logger.error(`[DB] getBanPanel failed: ${guildId}`, err);
+      return null;
+    }
+  }
+
+  function upsertBanPanel(guildId, channelId, messageId) {
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO ban_panels (guild_id, channel_id, message_id, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(guild_id) DO UPDATE SET
+             channel_id = excluded.channel_id,
+             message_id = excluded.message_id,
+             updated_at = excluded.updated_at`
+        )
+        .run(String(guildId), String(channelId), String(messageId), Date.now());
+      return true;
+    } catch (err) {
+      logger.error(`[DB] upsertBanPanel failed: ${guildId}`, err);
+      return false;
+    }
+  }
+
 module.exports = {
+  // --- Banlılar bildirim sistemi ---
+  createBanBildirimi,
+  completeBanBildirimi,
+  getBanBildirimi,
+  getBanBildirimiAskida,
+  getBanBildirimleri,
+  countRecentBanBildirimi,
+  getBanPanel,
+  upsertBanPanel,
   initDatabase,
   migrate,
   getDb,

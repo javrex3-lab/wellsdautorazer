@@ -26,6 +26,7 @@ const aktiflikCmd = require('../commands/aktiflik');
 const tickets = require('./tickets');
 const { handleIcButton } = require('./icHandler');
 const mz = require('./mazeret');
+const ban = require('./banli');
 const { handleQuitButton } = require('./quitHandler');
 const logger = require('../utils/logger');
 
@@ -82,7 +83,14 @@ async function handleButton(interaction) {
   if (customId === mz.CID.SONRAKI) {
     return mz.handleSayfalama(interaction, 'ileri');
   }
-  if (customId === 'quit_roles') {
+      /* ================= BANLILAR BILDIRIM SISTEMI ================= */
+    // Buton: "Banliyim" -> Ban Bilgilerini Bildir modali
+    if (customId === ban.CID.BILDIR) {
+      return ban.handleBildirButton(interaction);
+    }
+    /* ============================================================ */
+
+if (customId === 'quit_roles') {
     return handleQuitButton(interaction);
   }
 

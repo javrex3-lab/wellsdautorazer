@@ -372,6 +372,45 @@ CREATE TABLE IF NOT EXISTS giveaway_participants (
 );
 
 CREATE INDEX IF NOT EXISTS idx_giveaway_participants_giveaway ON giveaway_participants (giveaway_id);
+
+-- ==================================================================
+-- BANLILAR BILDIRIM SISTEMI
+-- Kullanici, /banlilar panelindeki "Banliyim" butonu ile ban bilgilerini
+-- bildirir. Bu kayit KULLANICI BILDIRIMIDIR; bir harici dogrulama
+-- kaynagi (Discord/FiveM ban sorgusu) YOKTUR ve dogrulanmis gibi
+-- sunulmaz. Kanal mesaji gonderilemezse durum="hata" olarak kalir.
+-- ==================================================================
+CREATE TABLE IF NOT EXISTS ban_bildirimleri (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id         TEXT NOT NULL,
+  user_id          TEXT NOT NULL,
+  ban_id           TEXT NOT NULL,
+  ban_sebep        TEXT NOT NULL,
+  ban_tarih        TEXT NOT NULL,
+  bildirim_zamani  INTEGER NOT NULL,
+  kanal_id         TEXT NOT NULL,
+  mesaj_id         TEXT,
+  durum            TEXT NOT NULL DEFAULT 'gonderiliyor',
+  hata             TEXT,
+  created_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ban_bildirimleri_guild ON ban_bildirimleri (guild_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ban_bildirimleri_user ON ban_bildirimleri (guild_id, user_id, created_at);
+
+-- Ayni Discord mesajina iki satir yazilamaz: teknik retry sonrasi
+-- ikinci kayit olusmaz (idempotency korumasi).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_ban_bildirim_mesaj
+  ON ban_bildirimleri (mesaj_id) WHERE mesaj_id IS NOT NULL;
+
+-- /banlılar panelinin TEK mesaj kaydı. Aynı sunucuda ikinci panel
+-- oluşturulmaz; komut tekrar çalıştırılırsa mesaj DÜZENLENİR.
+CREATE TABLE IF NOT EXISTS ban_panels (
+  guild_id   TEXT PRIMARY KEY,
+  channel_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 module.exports = { SCHEMA };

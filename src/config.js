@@ -210,6 +210,16 @@ const config = {
   // NOT: eski mazeretCooldownMs / mazeretPanelImage KALDIRILDI —
   //   tek aktif mazeret artık veritabanı seviyesinde garanti ediliyor,
   //   yeni panelde görsel yok.
+  // --- BANLILAR BİLDİRİM SİSTEMİ ---
+  // /banlılar panelinden gelen bildirimlerin gönderileceği kanal.
+  // Sunucuya ozel kritik ID: once .env, yoksa sabit (TICKET_CATEGORY_ID deseni).
+  // .env DEGISTIRILMEZ; buradaki varsayilan deger proje standardina uyar.
+  banlilarChannelId: (() => {
+    const v = (process.env.BANLILAR_CHANNEL_ID || '').trim();
+    if (/^\d{17,20}$/.test(v)) return v;
+    return '1559535039614689362';
+  })(),
+
   // --- Quit (sunucudan ayrılma) logu ---
   quitLogChannelId: (process.env.QUIT_LOG_CHANNEL_ID || '').trim() || null,
 
