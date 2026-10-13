@@ -29,9 +29,9 @@ module.exports = {
     // ticket açılırken kendisi verir (src/handlers/tickets.js).
     // ---- Mazeret paneli: yetkili listesi canlı takip + süre sonu temizliği ----
     try {
-      const { startMazeretTicker, adminChannelId } = require('../handlers/mazeretHandler');
-      if (adminChannelId()) startMazeretTicker(client);
-      else logger.warn('Mazeret yetkili paneli kapalı: MAZERET_ADMIN_CHANNEL_ID boş.');
+      const { startTicker } = require('../handlers/mazeret');
+    // Bot açılışında panel GÖNDERİLMEZ — yalnızca süre takibi başlatılır.
+    startTicker(client);
     } catch (err) {
       logger.error('Mazeret takibi başlatılamadı.', err);
     }

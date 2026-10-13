@@ -203,15 +203,6 @@ function buildIcButtons(decided = false) {
   );
 }
 
-/** Aktif mazeret panel görseli: /mazeretpng ile kaydedilen (DB) öncelikli, yoksa config varsayılanı. */
-function getMazeretImage() {
-  try {
-    return getSetting('mazeret_panel_image') || config.mazeretPanelImage || null;
-  } catch {
-    return config.mazeretPanelImage || null;
-  }
-}
-
 /** Panel görseli doğrulama (ticketpng + mazeretpng ortak). */
 const PANEL_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
 const PANEL_IMAGE_MAX_BYTES = 8 * 1024 * 1024; // 8 MB
@@ -223,37 +214,6 @@ function validateImageAttachment(att, maxBytes = PANEL_IMAGE_MAX_BYTES) {
   }
   if ((att.size || 0) > maxBytes) return { ok: false, reason: 'size' };
   return { ok: true };
-}
-
-/** /mazeret paneli (komutun kullanıldığı kanala gönderilir). */
-function buildMazeretPanelEmbed() {
-  const embed = baseEmbed(config.colors.mazeret)
-    .setTitle('📋 Mazeret Bildirimi')
-    .setDescription(
-      'Gelemeyeceğiniz / aktif olamayacağınız zamanları buradan bildirin.\n' +
-        'Aşağıdaki butona basıp mazeretinizi yazın — bildiriminiz mazeret kanalına düşer.',
-    );
-  const img = getMazeretImage();
-  if (img) embed.setImage(img);
-  return embed;
-}
-
-function buildMazeretOpenRow() {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('mazeret_open').setLabel('Mazeret Bildir').setStyle(ButtonStyle.Primary).setEmoji('📝'),
-  );
-}
-
-/** Kullanıcının mazeret bildirimi (panel kanalına gönderilir). */
-function buildMazeretReportEmbed({ userId, sure, text }) {
-  return baseEmbed(config.colors.mazeret)
-    .setTitle('📋 Mazeret Bildirimi')
-    .addFields(
-      { name: 'Bildiren:', value: `<@${userId}>`, inline: true },
-      { name: 'Süre:', value: sure ? String(sure).slice(0, 100) : 'Belirtilmedi', inline: true },
-      { name: 'Mazeret:', value: String(text).slice(0, 1024), inline: false },
-    )
-    .setTimestamp();
 }
 
 /** Quit (ayrılma) bildirimi — şık, geniş kart. */
@@ -404,12 +364,7 @@ module.exports = {
   buildSetupResultEmbed,
   buildSuccessEmbed,
   buildIcPanelEmbed,
-  buildIcButtons,
-  buildMazeretPanelEmbed,
-  buildMazeretOpenRow,
-  buildMazeretReportEmbed,
-  getMazeretImage,
-  validateImageAttachment,
+  buildIcButtons,  validateImageAttachment,
   PANEL_IMAGE_EXTS,
   PANEL_IMAGE_MAX_BYTES,
   buildQuitPanelEmbed,

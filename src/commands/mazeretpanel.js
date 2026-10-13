@@ -1,24 +1,38 @@
 /**
- * /mazeretpanel - Herkesin mazeret bildirebileceği paneli gönderir.
+ * /mazeretpanel - Mazeret bildirim panelini gönderir (yalnızca yetkililer).
  *
- * Panel tek bir buton taşır: "Mazeret Bildir" -> modal (süre + sebep).
- * Bildirim yetkili kanalındaki (MAZERET_ADMIN_CHANNEL_ID) listeye düşer.
+ * Panelde TEK buton vardır: 🔔 Mazeret Bildir
+ *   → süre select menüsü → sebep modalı → kayıt → merkezi aktif-liste paneli
  *
- * Aynı kanalda zaten bir panel varsa YENİSİ GÖNDERİLMEZ, eskisi güncellenir
- * (herkes kullanabilsin diye spam koruması şart).
+ * Kurallar:
+ *  - Kayıtlı panel mesajı varsa DÜZENLENİR (duplicate oluşmaz)
+ *  - Panel mesajı silinmişse yeni mesaj gönderilir ve kayıt güncellenir
+ *  - Bot açılışında/redeploy'da otomatik panel GÖNDERİLMEZ
  */
-const { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { SlashCommandBuilder, MessageFlags, ChannelType, PermissionFlagsBits } = require('discord.js');
 const { buildErrorEmbed, buildSuccessEmbed } = require('../utils/embeds');
-const { buildMazeretPanelEmbed, buildMazeretOpenRow } = require('../utils/mazeretEmbeds');
-const { getActiveMazerets, upsertMazeretActivePanel, getMazeretActivePanel } = require('../database/database');
-const { refreshAdminPanel } = require('../handlers/mazeretHandler');
+const { buildPanelEmbed, buildBildirRow } = require('../utils/mazeretViews');
+const {
+  getActiveMazerets,
+  upsertMazeretActivePanel,
+  getMazeretActivePanel,
+} = require('../database/database');
+const { canManageTickets } = require('../utils/permissions');
+const { refreshMerkeziPanel } = require('../handlers/mazeret');
 const logger = require('../utils/logger');
 
 module.exports = {
+  // Yetki kontrolü komutun kendi içinde (canManageTickets) + global kapıdan muaf.
+  openToRoleManagers: true,
   data: new SlashCommandBuilder()
     .setName('mazeretpanel')
-    .setDescription('Mazeret bildirimi panelini bu kanala gönderir (herkes kullanabilir).'),
-  openToEveryone: true,
+    .setDescription('Mazeret bildirim panelini gönderir (yalnızca yetkililer).')
+    .addChannelOption((opt) =>
+      opt
+        .setName('kanal')
+        .setDescription('Panelin gönderileceği kanal (boşsa bu kanal)')
+        .addChannelTypes(ChannelType.GuildText),
+    ),
 
   async execute(interaction) {
     if (!interaction.guild) {
@@ -26,39 +40,73 @@ module.exports = {
         .reply({ embeds: [buildErrorEmbed('Bu komut yalnızca sunucuda kullanılabilir.')], flags: MessageFlags.Ephemeral })
         .catch(() => {});
     }
+    if (!canManageTickets(interaction.member)) {
+      return interaction
+        .reply({ embeds: [buildErrorEmbed('Bu komutu yalnızca yetkililer kullanabilir.')], flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
+
+    const guildId = interaction.guildId;
+    let hedef;
+    try {
+      hedef = interaction.options.getChannel('kanal') || null;
+    } catch {
+      hedef = null;
+    }
+    hedef = hedef || interaction.channel;
+    if (!hedef?.isTextBased?.() || hedef.isDMBased?.()) {
+      return interaction
+        .reply({ embeds: [buildErrorEmbed('Panel yalnızca metin kanalına gönderilebilir.')], flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
 
     try {
-      const guildId = interaction.guildId;
-      const aktif = getActiveMazerets(guildId).length;
+      const me = interaction.guild.members?.me;
+      if (me) {
+        const p = hedef.permissionsFor(me);
+        if (!p?.has(PermissionFlagsBits.SendMessages) || !p?.has(PermissionFlagsBits.EmbedLinks)) {
+          return interaction
+            .reply({
+              embeds: [buildErrorEmbed('Bu kanala mesaj/embed gönderme iznim yok.')],
+              flags: MessageFlags.Ephemeral,
+            })
+            .catch(() => {});
+        }
+      }
 
-      // --- Aynı kanalda panel var mı? ---
+      const aktif = getActiveMazerets(guildId).length;
+      const embed = buildPanelEmbed({ guildName: interaction.guild.name, activeCount: aktif });
+      const row = buildBildirRow();
+
+      // Duplicate engeli: aynı kanalda kayıtlı panel varsa DÜZENLE
       const kayit = getMazeretActivePanel(guildId, 'public');
       let mesaj = null;
-      if (kayit && kayit.channel_id === interaction.channelId) {
-        mesaj = await interaction.channel.messages.fetch(kayit.message_id).catch(() => null);
+      let eylem = 'gonderildi';
+      if (kayit && kayit.channel_id === hedef.id) {
+        mesaj = await hedef.messages.fetch(kayit.message_id).catch(() => null);
+        if (mesaj) {
+          await mesaj.edit({ embeds: [embed], components: [row] });
+          eylem = 'guncellendi';
+        }
+      }
+      if (!mesaj) {
+        mesaj = await hedef.send({ embeds: [embed], components: [row] });
+        upsertMazeretActivePanel(guildId, 'public', hedef.id, mesaj.id);
       }
 
-      if (mesaj) {
-        await mesaj.edit({ embeds: [buildMazeretPanelEmbed({ activeCount: aktif })], components: [buildMazeretOpenRow()] });
-      } else {
-        mesaj = await interaction.channel.send({
-          embeds: [buildMazeretPanelEmbed({ activeCount: aktif })],
-          components: [buildMazeretOpenRow()],
-        });
-        upsertMazeretActivePanel(guildId, 'public', interaction.channelId, mesaj.id);
-      }
+      // Merkezi aktif-liste panelini de tazele (yoksa oluşturur)
+      const merkeziOk = await refreshMerkeziPanel(interaction.client, guildId, 1);
 
-      // Yetkili listesi panelini de tazele (yoksa oluşturur).
-      const adminOk = await refreshAdminPanel(interaction.client, guildId);
+      logger.success(`/mazeretpanel: ${eylem} (kanal ${hedef.id}, mesaj ${mesaj.id}) — ${aktif} aktif kayıt`);
 
-      logger.success(`Mazeret paneli gönderildi (#${interaction.channel?.name || interaction.channelId})`);
       return interaction
         .reply({
           embeds: [
             buildSuccessEmbed(
-              'Mazeret paneli hazır.\n' +
-                'Artık herkes bu butona basarak mazeret bildirebilir.\n' +
-                (adminOk ? '' : '\n⚠️ Yetkili listesi paneli güncellenemedi (kanal ayarını kontrol et).'),
+              `Mazeret paneli hazır (${eylem === 'guncellendi' ? 'mevcut panel güncellendi' : 'yeni mesaj gönderildi'}).\n` +
+                `**Kanal:** <#${hedef.id}>\n` +
+                `**Aktif mazeretli:** ${aktif} kişi` +
+                (merkeziOk ? '' : '\n⚠️ Merkezi liste paneli güncellenemedi (kanal ayarını kontrol et).'),
             ),
           ],
           flags: MessageFlags.Ephemeral,

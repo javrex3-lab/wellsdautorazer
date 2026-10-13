@@ -309,9 +309,6 @@ module.exports = {
   getTicketPanel,
   deleteTicketPanel,
   // --- Mazeret panel ---
-  upsertMazeretPanel,
-  getMazeretPanel,
-  // --- Mazeret kayıtları ---
   createMazeretRecord,
   getMazeretById,
   getActiveMazerets,
@@ -376,6 +373,17 @@ module.exports = {
   claimGiveawayFinalize,
   finishGiveaway,
   updateGiveawayWinners,
+  // --- Yeni Mazeret sistemi ---
+  createMazeretRecord,
+  getMazeretById,
+  getActiveMazerets,
+  getActiveMazeretByUser,
+  expireMazerets,
+  endMazeret,
+  upsertMazeretActivePanel,
+  getMazeretActivePanel,
+  deleteMazeretActivePanel,
+
 };
 
 
@@ -440,7 +448,6 @@ function deleteSetting(key) {
 
 
 
-// ---------- Mazeret panel mesajı (sunucu başına tek) ----------
 
 // ================= YENİ TICKET SİSTEMİ =================
 
@@ -567,28 +574,7 @@ function deleteTicketPanel(guildId) {
 }
 
 
-function upsertMazeretPanel(guildId, channelId, messageId) {
-  try {
-    getDb()
-      .prepare(
-        `INSERT INTO mazeret_panels (guild_id, channel_id, message_id, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id, message_id = excluded.message_id, updated_at = excluded.updated_at`,
-      )
-      .run(String(guildId), String(channelId), String(messageId), Date.now());
-  } catch (err) {
-    logger.error(`[DB] upsertMazeretPanel failed: ${guildId}`, err);
-    throw err;
-  }
-}
 
-function getMazeretPanel(guildId) {
-  try {
-    return getDb().prepare('SELECT * FROM mazeret_panels WHERE guild_id = ?').get(String(guildId)) || null;
-  } catch (err) {
-    logger.error(`[DB] getMazeretPanel failed: ${guildId}`, err);
-    return null;
-  }
-}
 
 // ---------- Quit takibi: rol snapshot + ayrılma kayıtları ----------
 
@@ -669,7 +655,6 @@ function pruneQuitLogs(guildId, maxAgeMs = 90 * 24 * 60 * 60 * 1000) {
   }
 }
 
-// ---------- Mazeret kayıtları ----------
 
 /**
  * Yeni mazeret bildirimi kaydeder.
@@ -683,165 +668,26 @@ function pruneQuitLogs(guildId, maxAgeMs = 90 * 24 * 60 * 60 * 1000) {
  * @param {string} p.reportedBy bildiren yetkili
  * @returns {{ok:boolean, record?:object, error?:string}}
  */
-function createMazeretRecord({ guildId, userId, reason, durationRaw, durationMs, durationGuess = 0, reportedBy }) {
-  try {
-    const db = getDb();
-    const now = Date.now();
-    // Aynı kullanıcının AKTİF mazereti varsa üstüne yazma, yeni kayıt açma.
-    const existing = db
-      .prepare('SELECT id FROM mazeret_records WHERE guild_id = ? AND user_id = ? AND active = 1')
-      .get(String(guildId), String(userId));
-    if (existing) return { ok: false, error: 'already_active' };
 
-    const res = db
-      .prepare(
-        `INSERT INTO mazeret_records
-           (guild_id, user_id, reason, duration_raw, duration_ms, duration_guess, created_at, expires_at, reported_by, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      )
-      .run(
-        String(guildId),
-        String(userId),
-        String(reason || '').slice(0, 500),
-        String(durationRaw || '').slice(0, 100),
-        Math.round(Number(durationMs) || 0),
-        durationGuess ? 1 : 0,
-        now,
-        now + Math.round(Number(durationMs) || 0),
-        String(reportedBy),
-      );
-    return { ok: true, record: getMazeretById(Number(res.lastInsertRowid)) };
-  } catch (err) {
-    logger.error(`[DB] createMazeretRecord failed: ${guildId}/${userId}`, err);
-    return { ok: false, error: 'db_error' };
-  }
-}
-
-function getMazeretById(id) {
-  try {
-    return getDb().prepare('SELECT * FROM mazeret_records WHERE id = ?').get(Number(id)) || null;
-  } catch (err) {
-    logger.error(`[DB] getMazeretById failed: ${id}`, err);
-    return null;
-  }
-}
 
 /**
  * Şu an geçerli mazereti olan üyeler (süresi dolmamış), en kısa süreden başlayarak.
  * Süresi geçmiş ama kapanmamış kayıtları yan etkide temizler.
  * @returns {Array<object>}
  */
-function getActiveMazerets(guildId, now = Date.now()) {
-  try {
-    const db = getDb();
-    db.prepare(
-      `UPDATE mazeret_records SET active = 0, ended_at = ?, end_reason = 'expired'
-       WHERE guild_id = ? AND active = 1 AND expires_at <= ?`,
-    ).run(now, String(guildId), now);
-    return db
-      .prepare('SELECT * FROM mazeret_records WHERE guild_id = ? AND active = 1 AND expires_at > ? ORDER BY expires_at ASC')
-      .all(String(guildId), now);
-  } catch (err) {
-    logger.error(`[DB] getActiveMazerets failed: ${guildId}`, err);
-    return [];
-  }
-}
 
 /** Bir üyenin aktif mazeret kaydı (yoksa null). */
-function getActiveMazeretByUser(guildId, userId, now = Date.now()) {
-  try {
-    return (
-      getDb()
-        .prepare('SELECT * FROM mazeret_records WHERE guild_id = ? AND user_id = ? AND active = 1 AND expires_at > ? ORDER BY expires_at DESC')
-        .get(String(guildId), String(userId), now) || null
-    );
-  } catch (err) {
-    logger.error(`[DB] getActiveMazeretByUser failed: ${guildId}/${userId}`, err);
-    return null;
-  }
-}
 
 /**
  * Mazereti süre dolmadan bitirir.
  * @returns {{ok:boolean, record?:object, error?:string}}
  */
-function endMazeret(guildId, userId, endedBy, reason = 'manual') {
-  try {
-    const db = getDb();
-    const rec = db
-      .prepare('SELECT * FROM mazeret_records WHERE guild_id = ? AND user_id = ? AND active = 1 ORDER BY expires_at DESC')
-      .get(String(guildId), String(userId));
-    if (!rec) return { ok: false, error: 'not_found' };
-    db.prepare('UPDATE mazeret_records SET active = 0, ended_at = ?, ended_by = ?, end_reason = ? WHERE id = ?').run(
-      Date.now(),
-      String(endedBy || ''),
-      String(reason || 'manual').slice(0, 40),
-      rec.id,
-    );
-    return { ok: true, record: getMazeretById(rec.id) };
-  } catch (err) {
-    logger.error(`[DB] endMazeret failed: ${guildId}/${userId}`, err);
-    return { ok: false, error: 'db_error' };
-  }
-}
 
 /** Süresi dolmuş kayıtları kapatır; kaç tane kapatıldığını döner. */
-function expireMazerets(guildId, now = Date.now()) {
-  try {
-    const res = getDb()
-      .prepare(
-        `UPDATE mazeret_records SET active = 0, ended_at = ?, end_reason = 'expired'
-         WHERE guild_id = ? AND active = 1 AND expires_at <= ?`,
-      )
-      .run(now, String(guildId), now);
-    return Number(res.changes || 0);
-  } catch (err) {
-    logger.error(`[DB] expireMazerets failed: ${guildId}`, err);
-    return 0;
-  }
-}
 
 /** Panel mesajını hatırlar (kind: 'admin' = yetkili listesi, 'public' = herkesin paneli). */
-function upsertMazeretActivePanel(guildId, kind, channelId, messageId) {
-  try {
-    getDb()
-      .prepare(
-        `INSERT INTO mazeret_active_panels (guild_id, kind, channel_id, message_id, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(guild_id, kind) DO UPDATE SET
-           channel_id = excluded.channel_id,
-           message_id = excluded.message_id,
-           updated_at = excluded.updated_at`,
-      )
-      .run(String(guildId), String(kind), String(channelId), String(messageId), Date.now());
-    return true;
-  } catch (err) {
-    logger.error(`[DB] upsertMazeretActivePanel failed: ${guildId}/${kind}`, err);
-    return false;
-  }
-}
 
-function getMazeretActivePanel(guildId, kind) {
-  try {
-    return (
-      getDb().prepare('SELECT * FROM mazeret_active_panels WHERE guild_id = ? AND kind = ?').get(String(guildId), String(kind)) ||
-      null
-    );
-  } catch (err) {
-    logger.error(`[DB] getMazeretActivePanel failed: ${guildId}/${kind}`, err);
-    return null;
-  }
-}
 
-function deleteMazeretActivePanel(guildId, kind) {
-  try {
-    getDb().prepare('DELETE FROM mazeret_active_panels WHERE guild_id = ? AND kind = ?').run(String(guildId), String(kind));
-    return true;
-  } catch (err) {
-    logger.error(`[DB] deleteMazeretActivePanel failed: ${guildId}/${kind}`, err);
-    return false;
-  }
-}
 
 // ---------- IC isim onay kayıtları ----------
 
@@ -903,6 +749,174 @@ function setIcPanel(id, panelMessageId) {
     logger.error(`[DB] setIcPanel failed: ${id}`, err);
   }
 }
+// ---------- YENİ MAZERET SİSTEMİ ----------
+
+/**
+ * Yeni mazeret kaydı oluşturur.
+ * Aynı kullanıcının ikinci bir AKTİF mazereti veritabanı seviyesinde engellenir
+ * (uq_mazeret_one_active kısmi benzersiz indexi) — eş zamanlı isteklerde bile duplicate oluşmaz.
+ * @returns {{ok:true, record:object}|{ok:false, error:string}}
+ */
+function createMazeretRecord({ guildId, userId, reason, durationRaw, durationMs, reportedBy }) {
+  const db = getDb();
+  const gid = String(guildId);
+  const uid = String(userId);
+  const ms = Math.round(Number(durationMs));
+  const sebep = String(reason || "").trim().slice(0, 500);
+  if (!Number.isFinite(ms) || ms <= 0) return { ok: false, error: "gecersiz_sure" };
+  if (!sebep) return { ok: false, error: "sebep_bos" };
+
+  const now = Date.now();
+  // SÜRE BAŞLANGIÇTAN HESAPLANIR (started_at + duration_ms = expires_at).
+  const startedAt = now;
+  const expiresAt = startedAt + ms;
+
+  try {
+    const res = db.prepare(
+      `INSERT INTO mazeret_records
+         (guild_id, user_id, reason, duration_raw, duration_ms, duration_guess,
+          created_at, started_at, expires_at, reported_by, active)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 1)`
+    ).run(gid, uid, sebep, String(durationRaw || "").slice(0, 100), ms, now, startedAt, expiresAt, String(reportedBy || uid));
+    const record = getMazeretById(Number(res.lastInsertRowid));
+    if (!record) return { ok: false, error: "kayit_okunamadi" };
+    return { ok: true, record };
+  } catch (err) {
+    // Kısmi benzersizlik ihlali: kullanıcının zaten AKTİF mazereti var.
+    // SQLite hata metni index adını değil KOLON adlarını verir:
+    //   'UNIQUE constraint failed: mazeret_records.guild_id, mazeret_records.user_id'
+    // Bu yüzden mesaja bakmak yerine KAYDEDEN SONRA doğrularız: kullanıcının gerçekten
+    // aktif mazereti var mı? Varsa "already_active", değilse gerçek DB hatası.
+    const benzersiz =
+      err?.errcode === 2067 || err?.code === 'ERR_SQLITE_ERROR' && /UNIQUE constraint failed/i.test(String(err?.message || ''));
+    if (benzersiz || /uq_mazeret_one_active/i.test(String(err?.message || ''))) {
+      const varOlan = getActiveMazeretByUser(guildId, userId);
+      if (varOlan) {
+        logger.info(`[DB] mazeret: ${uid} için ikinci aktif kayıt engellendi (tek-aktif kısıtı)`);
+        return { ok: false, error: 'already_active' };
+      }
+    }
+    logger.error(`[DB] createMazeretRecord failed: ${gid}/${uid}`, err);
+    return { ok: false, error: "db_hatasi" };
+  }
+}
+
+function getMazeretById(id) {
+  try {
+    return getDb().prepare('SELECT * FROM mazeret_records WHERE id = ?').get(Number(id)) || null;
+  } catch (err) {
+    logger.error(`[DB] getMazeretById failed: ${id}`, err);
+    return null;
+  }
+}
+
+/**
+ * Aktif mazeretler. KRİTİK: süresi dolmuş kayıtlar "aktif" sayılmaz.
+ * Bu sorgu KALICI zaman damgalarına bakar — RAM timer'ı ya da restart etkisi yoktur.
+ */
+function getActiveMazerets(guildId, now = Date.now()) {
+  try {
+    return getDb()
+      .prepare(
+        "SELECT * FROM mazeret_records WHERE guild_id = ? AND active = 1 AND expires_at > ? ORDER BY expires_at ASC, id ASC"
+      )
+      .all(String(guildId), Number(now));
+  } catch (err) {
+    logger.error(`[DB] getActiveMazerets failed: ${guildId}`, err);
+    return [];
+  }
+}
+
+/** Bir üyenin hâlâ geçerli mazereti (yoksa null). */
+function getActiveMazeretByUser(guildId, userId, now = Date.now()) {
+  try {
+    return (
+      getDb()
+        .prepare(
+          "SELECT * FROM mazeret_records WHERE guild_id = ? AND user_id = ? AND active = 1 AND expires_at > ? ORDER BY expires_at DESC LIMIT 1"
+        )
+        .get(String(guildId), String(userId), Number(now)) || null
+    );
+  } catch (err) {
+    logger.error(`[DB] getActiveMazeretByUser failed: ${guildId}/${userId}`, err);
+    return null;
+  }
+}
+
+/**
+ * Süresi dolmuş kayıtları kapatır (geçmiş KALIR, silinmez).
+ * @returns {number} kapatılan kayıt sayısı
+ */
+function expireMazerets(guildId, now = Date.now()) {
+  try {
+    const r = getDb()
+      .prepare(
+        "UPDATE mazeret_records SET active = 0, ended_at = ?, end_reason = 'expired' WHERE guild_id = ? AND active = 1 AND expires_at <= ?"
+      )
+      .run(Number(now), String(guildId), Number(now));
+    return Number(r.changes || 0);
+  } catch (err) {
+    logger.error(`[DB] expireMazerets failed: ${guildId}`, err);
+    return 0;
+  }
+}
+
+/** Mazeret erken/normal şekilde kapatılır (geçmiş kayıt olarak kalır). */
+function endMazeret(guildId, userId, endedBy, reason = "manual", now = Date.now()) {
+  try {
+    const r = getDb()
+      .prepare(
+        "UPDATE mazeret_records SET active = 0, ended_at = ?, ended_by = ?, end_reason = ? WHERE guild_id = ? AND user_id = ? AND active = 1"
+      )
+      .run(Number(now), endedBy ? String(endedBy) : null, String(reason).slice(0, 40), String(guildId), String(userId));
+    return Number(r.changes || 0) > 0;
+  } catch (err) {
+    logger.error(`[DB] endMazeret failed: ${guildId}/${userId}`, err);
+    return false;
+  }
+}
+
+/**
+ * Panel mesajı kaydı. kind: "public" = bildirim paneli, "central" = aktif liste.
+ * Bot açılışında bu kayda DOKUNULMAZ (panel otomatik gönderilmez).
+ */
+function upsertMazeretActivePanel(guildId, kind, channelId, messageId) {
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO mazeret_active_panels (guild_id, kind, channel_id, message_id, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(guild_id, kind) DO UPDATE SET
+           channel_id = excluded.channel_id, message_id = excluded.message_id,
+           updated_at = excluded.updated_at`
+      )
+      .run(String(guildId), String(kind), String(channelId), String(messageId), Date.now());
+    return true;
+  } catch (err) {
+    logger.error(`[DB] upsertMazeretActivePanel failed: ${guildId}/${kind}`, err);
+    return false;
+  }
+}
+
+function getMazeretActivePanel(guildId, kind) {
+  try {
+    return getDb().prepare("SELECT * FROM mazeret_active_panels WHERE guild_id = ? AND kind = ?").get(String(guildId), String(kind)) || null;
+  } catch (err) {
+    logger.error(`[DB] getMazeretActivePanel failed: ${guildId}/${kind}`, err);
+    return null;
+  }
+}
+
+function deleteMazeretActivePanel(guildId, kind) {
+  try {
+    getDb().prepare("DELETE FROM mazeret_active_panels WHERE guild_id = ? AND kind = ?").run(String(guildId), String(kind));
+    return true;
+  } catch (err) {
+    logger.error(`[DB] deleteMazeretActivePanel failed: ${guildId}/${kind}`, err);
+    return false;
+  }
+}
+
 
 function decideIc(panelMessageId, status, decidedBy) {
   try {

@@ -136,6 +136,11 @@ CREATE INDEX IF NOT EXISTS idx_ic_panel ON ic_approvals (panel_message_id);
 -- ===================== MAZERET SISTEMI =====================
 -- Her bildirim bir kayit olur; sure dolunca otomatik "aktif" listesinden cikar.
 -- duration_ms = kullaniciya yazdirilan metinden hesaplanan gercek sure.
+-- ===================== YENI MAZERET SISTEMI =====================
+-- Tek tablo: mazeret_records. Gecmis kayitlar SILINMEZ; aktif sorgusu
+-- yalnizca bitis zamani henuz gelmemis kayitlari dondurur.
+-- started_at : mazeretin baslangic zamani (kayit aninda = created_at)
+-- expires_at : bitis zamani (kapanma aninda DEGISTIRILMEZ)
 CREATE TABLE IF NOT EXISTS mazeret_records (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   guild_id       TEXT NOT NULL,
@@ -145,6 +150,7 @@ CREATE TABLE IF NOT EXISTS mazeret_records (
   duration_ms    INTEGER NOT NULL,
   duration_guess INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL,
+  started_at     INTEGER NOT NULL,
   expires_at     INTEGER NOT NULL,
   reported_by    TEXT NOT NULL,
   active         INTEGER NOT NULL DEFAULT 1,
@@ -156,8 +162,12 @@ CREATE TABLE IF NOT EXISTS mazeret_records (
 CREATE INDEX IF NOT EXISTS idx_mazeret_active ON mazeret_records (guild_id, active, expires_at);
 CREATE INDEX IF NOT EXISTS idx_mazeret_user ON mazeret_records (guild_id, user_id, active);
 
--- Yetkili paneli (aktif mazeretli listesi) TEK bir mesajda tutulur.
--- kind: 'admin' = yetkili listesi, 'public' = herkesin bildirim paneli.
+-- Ayni kullanicinin ayni anda YALNIZCA BIR aktif mazereti olabilir.
+-- Kismi (partial) benzersizlik: gecmis kayitlar bu kisiti etkilemez.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mazeret_one_active
+  ON mazeret_records (guild_id, user_id) WHERE active = 1;
+
+-- Panel mesaj kayitlari. kind: 'public' = bildirim paneli, 'central' = aktif liste
 CREATE TABLE IF NOT EXISTS mazeret_active_panels (
   guild_id   TEXT NOT NULL,
   kind       TEXT NOT NULL,
@@ -166,6 +176,11 @@ CREATE TABLE IF NOT EXISTS mazeret_active_panels (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (guild_id, kind)
 );
+
+CREATE INDEX IF NOT EXISTS idx_mazeret_active ON mazeret_records (guild_id, active, expires_at);
+CREATE INDEX IF NOT EXISTS idx_mazeret_user ON mazeret_records (guild_id, user_id, active);
+
+
 
 -- ===================== YENİ TICKET SİSTEMİ =====================
 -- Tek tablo: ticket_sessions. Eski "tickets" tablosu artık kullanılmaz;

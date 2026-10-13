@@ -8,7 +8,7 @@ const { buildErrorEmbed } = require('../utils/embeds');
 const { hasCommandAccess, canManageRoles, canManageBan } = require('../utils/permissions');
 const { canManageGuard } = require('../guard/permissions');
 const { handleButton } = require('../handlers/buttonHandler');
-const { MODAL_ID, handleMazeretSubmit } = require('../handlers/mazeretHandler');
+const mz = require('../handlers/mazeret');
 const logger = require('../utils/logger');
 
 function labelOf(interaction) {
@@ -51,14 +51,32 @@ module.exports = {
       }
 
 
-      // --- Modal gönderimleri (mazeret formu) ---
+      // --- Select menüleri (mazeret süre seçimi) ---
+      if (interaction.isAnySelectMenu && interaction.isAnySelectMenu()) {
+        if (interaction.customId === mz.CID.SURE) {
+          await mz.handleSureSelect(interaction);
+        } else {
+          logger.warn(`Bilinmeyen select customId: ${interaction.customId}`);
+          if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+            await interaction
+              .reply({ embeds: [buildErrorEmbed('Bilinmeyen liste.')], flags: MessageFlags.Ephemeral })
+              .catch(() => {});
+          }
+        }
+        logger.info(`Interaction handled: ${label} (${Date.now() - start}ms)`);
+        return;
+      }
+
+      // --- Modal gönderimleri (mazeret sebebi) ---
       if (interaction.isModalSubmit()) {
-        if (interaction.customId === MODAL_ID) {
-          await handleMazeretSubmit(interaction);
+        if (interaction.customId === mz.CID.SEBEP) {
+          await mz.handleSebepSubmit(interaction);
         } else {
           logger.warn(`Bilinmeyen modal customId: ${interaction.customId}`);
           if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
-            await interaction.reply({ embeds: [buildErrorEmbed('Bilinmeyen form.')], flags: MessageFlags.Ephemeral }).catch(() => {});
+            await interaction
+              .reply({ embeds: [buildErrorEmbed('Bilinmeyen form.')], flags: MessageFlags.Ephemeral })
+              .catch(() => {});
           }
         }
         logger.info(`Interaction handled: ${label} (${Date.now() - start}ms)`);

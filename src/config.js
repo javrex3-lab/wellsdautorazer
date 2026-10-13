@@ -200,17 +200,16 @@ const config = {
   // Bu kanala yazılan her mesaj için onay paneli açılır (Onayla/Reddet).
   icApprovalChannelId: (process.env.IC_APPROVAL_CHANNEL_ID || '').trim() || null,
 
-  // --- Mazeret sistemi ---
-  mazeretCooldownMs: int('MAZERET_COOLDOWN_MS', 300000), // kullanıcı başına bildirim bekleme süresi (5 dk)
-  // Mazeret bildirimlerinin düştüğü kanal (geriye uyumluluk: MAZERET_ADMIN_CHANNEL_ID boşsa burası kullanılır).
-  mazeretChannelId: (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
-  // YETKİLİ listesi panelinin kanalı — sadece yetkililer görecek.
+  // --- YENİ MAZERET SİSTEMİ ---
+  // Merkezi aktif-liste panelinin kanalı (her kayıt burada görünür).
   mazeretAdminChannelId: (process.env.MAZERET_ADMIN_CHANNEL_ID || '').trim() || (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
-  // Canlı panel yenileme aralığı (ms). Varsayılan 60sn.
-  mazeretRefreshMs: int('MAZERET_REFRESH_MS', 60000),
-  // Mazeret panel banner görseli (/mazeretpng ile değişir; DB'deki değer önceliklidir).
-  mazeretPanelImage: (process.env.MAZERET_PANEL_IMAGE || '').trim() || null,
-
+  // Geriye uyumluluk (eski isim).
+  mazeretChannelId: (process.env.MAZERET_CHANNEL_ID || '').trim() || null,
+  // Süresi dolan kayıtlar için periyodik kontrol aralığı (ms). Min 15 sn.
+  mazeretRefreshMs: Math.max(15_000, int('MAZERET_REFRESH_MS', 60_000)),
+  // NOT: eski mazeretCooldownMs / mazeretPanelImage KALDIRILDI —
+  //   tek aktif mazeret artık veritabanı seviyesinde garanti ediliyor,
+  //   yeni panelde görsel yok.
   // --- Quit (sunucudan ayrılma) logu ---
   quitLogChannelId: (process.env.QUIT_LOG_CHANNEL_ID || '').trim() || null,
 
