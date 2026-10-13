@@ -198,7 +198,19 @@ const config = {
 
   // --- IC isim onay kanalı ---
   // Bu kanala yazılan her mesaj için onay paneli açılır (Onayla/Reddet).
-  icApprovalChannelId: (process.env.IC_APPROVAL_CHANNEL_ID || '').trim() || null,
+// ÖNEMLİ: Bu değer ASLA null olmamalıdır. `.env` Railway/PaaS tarafından
+// okunmaz (gitignore'lu, yalnızca yerelde anlamlıdır). Yalnızca .env'e bakan
+// bir alan PaaS'te sessizce devre dışı kalır ve sistem HİÇBİR hata vermeden
+// ölür. Bu yüzden TICKET_CATEGORY_ID / banlilarChannelId ile AYNI desen
+// kullanılır: önce .env, yoksa sunucuya özel sabit kimlik.
+// Sabit kanal: #kod-iç-isim (guild 1354465879311777893).
+icApprovalChannelId: (() => {
+  const v = (process.env.IC_APPROVAL_CHANNEL_ID || '').trim();
+  if (/^\d{17,20}$/.test(v)) return v;
+  return '1522774289743351909';
+})(),
+// Yapılandırmanın nereden geldiği (açılış tanılaması için).
+icApprovalChannelFromEnv: /^\d{17,20}$/.test((process.env.IC_APPROVAL_CHANNEL_ID || '').trim()),
 
   // --- YENİ MAZERET SİSTEMİ ---
   // Merkezi aktif-liste panelinin kanalı (her kayıt burada görünür).

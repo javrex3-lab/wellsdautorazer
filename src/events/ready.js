@@ -4,7 +4,7 @@
  */
 const { ActivityType, Routes } = require('discord.js');
 const config = require('../config');
-const { getAllSystems, countGuardGuilds } = require('../database/database');
+const { getAllSystems, countGuardGuilds, getPendingIc } = require('../database/database');
 const { getSavedVoiceChannel, joinVoice, leaveVoice } = require('../handlers/voiceHandler');
 const logger = require('../utils/logger');
 
@@ -93,6 +93,57 @@ module.exports = {
       else logger.warn('Komut erişim kapısı PASİF: BOT_ALLOWED_ROLE_IDS boş, herkes kullanabilir.');
     } catch (err) {
       logger.error('Erişim kapısı durumu okunamadı.', err);
+    }
+
+    // ---- IC İSİM SİSTEMİ: kanalı doğrula (sessiz ölümü önler) ----
+    try {
+      const icId = config.icApprovalChannelId;
+      const kaynak = config.icApprovalChannelFromEnv ? '.env' : 'config.js sabiti';
+      if (!icId) {
+        logger.error(
+          'IC İSİM SİSTEMİ KAPALI: kanal kimliği yok. IC_APPROVAL_CHANNEL_ID ayarlayın ' +
+            'veya src/config.js içindeki sabit değeri güncelleyin.',
+        );
+      } else {
+        const guild = client.guilds.cache.get(config.guildId);
+        const ch = await guild?.channels.fetch(icId).catch(() => null);
+        if (!ch) {
+          logger.error(
+            `IC İSİM SİSTEMİ KAPALI: kanal <#${icId}> bulunamadı (${kaynak}). Mesajlar dinlenmiyor.`,
+          );
+        } else if (ch.guildId !== config.guildId) {
+          logger.error(`IC İSİM SİSTEMİ KAPALI: kanal <#${icId}> başka bir sunucuya ait.`);
+        } else if (!ch.isTextBased?.()) {
+          logger.error(`IC İSİM SİSTEMİ KAPALI: <#${icId}> bir metin kanalı değil.`);
+        } else {
+          const me = guild?.members?.me;
+          const p = me ? ch.permissionsFor(me) : null;
+          const eksik = p
+            ? [!p.has('ViewChannel') && 'ViewChannel', !p.has('SendMessages') && 'SendMessages', !p.has('ReadMessageHistory') && 'ReadMessageHistory'].filter(Boolean)
+            : [];
+          if (eksik.length) {
+            logger.warn(`IC kanalında bot yetkisi eksik (${eksik.join(', ')}) — <#${icId}>`);
+          } else {
+            let bekleyen = 0;
+            try {
+              const { getDb } = require('../database/database');
+              bekleyen = Number(getDb().prepare("SELECT COUNT(*) AS c FROM ic_approvals WHERE guild_id = ? AND status = 'pending'").get(config.guildId)?.c || 0);
+            } catch {
+              /* sayım kritik değil */
+            }
+            try {
+            } catch {
+              /* sayım kritik değil */
+            }
+            logger.success(
+              `IC İSİM SİSTEMİ AKTİF: <#${icId}> "${ch.name}" dinleniyor (${kaynak})` +
+                (bekleyen ? ` · ${bekleyen} bekleyen talep` : ''),
+            );
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('IC kanal tanılaması başarısız: ' + (err?.message || err));
     }
 
     // Ses kalıcılığı: restart öncesi bir kanalda idiysem geri katıl
